@@ -225,10 +225,19 @@ static void print_soon(store_t *st, daynum_t from, daynum_t today, int days)
     bool header = false;
     for (int i = 0; i < st->nitems; i++) {
         const item_t *it = &st->items[i];
-        if (it->kind != ITEM_TODO || it->done_day >= 0) continue;
-        bool overdue = (it->day >= 0 && it->day < today) || (it->due >= 0 && it->due < today);
-        bool undated = it->day < 0 && it->due < 0;
-        if (!overdue && !undated) continue;
+        if (it->kind != ITEM_TODO) continue;
+        daynum_t day = it->day >= 0 ? it->day : it->due;
+        bool overdue;
+        if (item_is_repeating(it)) {
+            day = todo_last_open_before(it, today);
+            if (day < 0) continue;
+            overdue = true;
+        } else {
+            if (it->done_day >= 0) continue;
+            bool open = (it->day >= 0 && it->day < today) || (it->due >= 0 && it->due < today);
+            if (!open && day >= 0) continue;
+            overdue = todo_overdue_on(it, day, today);
+        }
         if (!header) { printf("open todos\n"); header = true; }
         printf("  [ ] %s%s\n", it->title ? it->title : "", overdue ? "  (overdue)" : "");
     }

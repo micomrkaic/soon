@@ -124,6 +124,12 @@ daynum_t item_next_occurrence(const item_t *it, daynum_t after);   /* first occu
 daynum_t item_prev_occurrence(const item_t *it, daynum_t before);  /* last occurrence < before, or -1 */
 /* todos: done state of the occurrence shown on `day` (non-repeating: any done) */
 bool todo_done_on(const item_t *it, daynum_t day);
+/* open on its occurrence `day` and past its deadline: the due date if it has one, else the day itself
+ * (a repeating todo has no single due date; each occurrence's deadline is its own day) */
+bool todo_overdue_on(const item_t *it, daynum_t day, daynum_t today);
+/* the latest occurrence before today that is still open, or -1; for a repeating todo that is the one to
+ * mark done to clear the backlog, since earlier occurrences count as done with it */
+daynum_t todo_last_open_before(const item_t *it, daynum_t today);
 void todo_toggle_on(item_t *it, daynum_t day, daynum_t today, int now_min);
 
 /* parsing helpers shared with the UI */

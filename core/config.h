@@ -27,8 +27,8 @@
  *   unicode: auto            auto | on | off
  *   palette: default         default | mono (mono uses weight and inverse only)
  *   color <role>: <fg> [on <bg>] [bold] [dim] [underline] [inverse]
- *       roles: cursor today busy busier event eventsel allday todo tododone sel
- *              box panel err now field focus rule titlebar
+ *       roles: cursor today busy busier event eventsel allday todo overdue tododone
+ *              sel box panel err now field focus rule titlebar
  *       colors: default black red green yellow blue magenta cyan white,
  *               bright-<name>, or 0-15
  */
@@ -40,7 +40,7 @@
 
 enum {
     ROLE_CURSOR, ROLE_TODAY, ROLE_BUSY, ROLE_BUSIER, ROLE_EVENT, ROLE_EVENTSEL, ROLE_ALLDAY, ROLE_TODO,
-    ROLE_TODODONE, ROLE_SEL, ROLE_BOX, ROLE_PANEL, ROLE_ERR, ROLE_NOW, ROLE_FIELD, ROLE_FOCUS, ROLE_RULE,
+    ROLE_OVERDUE, ROLE_TODODONE, ROLE_SEL, ROLE_BOX, ROLE_PANEL, ROLE_ERR, ROLE_NOW, ROLE_FIELD, ROLE_FOCUS, ROLE_RULE,
     ROLE_TITLEBAR, N_ROLES
 };
 

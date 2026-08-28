@@ -286,6 +286,30 @@ int main(void)
         CHECK(!item_occurs_on(&ev, civil_to_days(2026, 9, 6)));
         free(ev.skips); ev.skips = NULL; ev.nskips = 0;
 
+        /* overdue: the due date if set, else the scheduled day; never once done */
+        {
+            daynum_t today = civil_to_days(2026, 9, 10);
+            item_t o;
+            item_blank(&o, ITEM_TODO);
+            CHECK(!todo_overdue_on(&o, o.day, today));                       /* undated: never overdue */
+            o.day = civil_to_days(2026, 9, 8);
+            CHECK(todo_overdue_on(&o, o.day, today));                        /* scheduled day passed */
+            o.due = civil_to_days(2026, 9, 12);
+            CHECK(!todo_overdue_on(&o, o.day, today));                       /* ...but the deadline has not */
+            o.due = civil_to_days(2026, 9, 9);
+            CHECK(todo_overdue_on(&o, o.day, today));
+            CHECK(!todo_overdue_on(&o, o.day, o.due));                       /* due today is not overdue */
+            o.done_day = today;
+            CHECK(!todo_overdue_on(&o, o.day, today));
+            o.done_day = -1; o.day = -1;
+            CHECK(todo_overdue_on(&o, o.due, today));                        /* unscheduled with a deadline */
+            CHECK_EQ(todo_last_open_before(&o, today), -1);
+            o.day = civil_to_days(2026, 9, 8);
+            CHECK_EQ(todo_last_open_before(&o, today), o.day);
+            o.done_day = today;
+            CHECK_EQ(todo_last_open_before(&o, today), -1);
+        }
+
         /* repeating todo: each occurrence has its own done state */
         item_t t;
         item_blank(&t, ITEM_TODO);
@@ -295,6 +319,11 @@ int main(void)
         todo_toggle_on(&t, civil_to_days(2026, 9, 7), civil_to_days(2026, 9, 7), 600);
         CHECK(todo_done_on(&t, civil_to_days(2026, 9, 7)));
         CHECK(!todo_done_on(&t, civil_to_days(2026, 9, 14)));
+        CHECK(!todo_overdue_on(&t, civil_to_days(2026, 9, 7), civil_to_days(2026, 9, 20)));    /* done occurrence */
+        CHECK(todo_overdue_on(&t, civil_to_days(2026, 9, 14), civil_to_days(2026, 9, 20)));    /* missed one */
+        CHECK(!todo_overdue_on(&t, civil_to_days(2026, 9, 21), civil_to_days(2026, 9, 20)));   /* future one */
+        CHECK_EQ(todo_last_open_before(&t, civil_to_days(2026, 9, 20)), civil_to_days(2026, 9, 14));   /* the missed one */
+        CHECK_EQ(todo_last_open_before(&t, civil_to_days(2026, 9, 10)), -1);                          /* nothing missed yet */
         todo_toggle_on(&t, civil_to_days(2026, 9, 14), civil_to_days(2026, 9, 14), 600);
         CHECK(todo_done_on(&t, civil_to_days(2026, 9, 14)));
         todo_toggle_on(&t, civil_to_days(2026, 9, 14), civil_to_days(2026, 9, 14), 600);   /* undo */

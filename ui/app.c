@@ -91,7 +91,7 @@ typedef struct {
 /* ---------- palette (deutan-safe defaults; overridable from the config file) ---------- */
 
 typedef struct {
-    style_t cursor, today, busy, busier, event, eventsel, allday, todo, tododone, sel,
+    style_t cursor, today, busy, busier, event, eventsel, allday, todo, overdue, tododone, sel,
             box, panel, err, now, field, focus, rule, titlebar;
 } palette_t;
 
@@ -111,6 +111,7 @@ static palette_t pal;
 #define S_EVENTSEL pal.eventsel
 #define S_ALLDAY   pal.allday
 #define S_TODO     pal.todo
+#define S_OVERDUE  pal.overdue
 #define S_TODODONE pal.tododone
 #define S_SEL      pal.sel
 #define S_BOX      pal.box
@@ -133,6 +134,7 @@ static void palette_init(const config_t *c)
     pal.eventsel = mono ? style(C_DEFAULT, C_DEFAULT, A_INV | A_BOLD | A_UL) : style(0, 13, A_BOLD);
     pal.allday   = mono ? style(C_DEFAULT, C_DEFAULT, A_BOLD) : style(14, C_DEFAULT, A_BOLD);
     pal.todo     = mono ? style(C_DEFAULT, C_DEFAULT, 0) : style(11, C_DEFAULT, 0);
+    pal.overdue  = mono ? style(C_DEFAULT, C_DEFAULT, A_BOLD) : style(13, C_DEFAULT, A_BOLD);
     pal.tododone = style(C_DEFAULT, C_DEFAULT, A_DIM);
     pal.sel      = mono ? style(C_DEFAULT, C_DEFAULT, A_INV | A_BOLD) : style(0, 13, A_BOLD);
     pal.box      = mono ? style(C_DEFAULT, C_DEFAULT, A_BOLD) : style(12, C_DEFAULT, 0);
@@ -144,7 +146,7 @@ static void palette_init(const config_t *c)
     pal.rule     = mono ? style(C_DEFAULT, C_DEFAULT, A_DIM) : style(12, C_DEFAULT, 0);
     if (!c) return;
     style_t *slots[N_ROLES] = { &pal.cursor, &pal.today, &pal.busy, &pal.busier, &pal.event, &pal.eventsel, &pal.allday, &pal.todo,
-                                &pal.tododone, &pal.sel, &pal.box, &pal.panel, &pal.err, &pal.now, &pal.field, &pal.focus, &pal.rule, &pal.titlebar };
+                                &pal.overdue, &pal.tododone, &pal.sel, &pal.box, &pal.panel, &pal.err, &pal.now, &pal.field, &pal.focus, &pal.rule, &pal.titlebar };
     for (int i = 0; i < N_ROLES; i++)
         if (c->color_set[i]) *slots[i] = style(c->colors[i].fg, c->colors[i].bg, c->colors[i].attr);
 }
@@ -255,10 +257,10 @@ static void item_label(app_t *a, const item_t *it, char *out, size_t n, bool wit
     else snprintf(out, n, "%02d:%02d %s", it->start / 60, it->start % 60, title);
 }
 
-static style_t item_style(const item_t *it, bool sel, daynum_t day)
+static style_t item_style(const app_t *a, const item_t *it, bool sel, daynum_t day)
 {
     if (sel) return S_SEL;
-    if (it->kind == ITEM_TODO) return todo_done_on(it, day) ? S_TODODONE : S_TODO;
+    if (it->kind == ITEM_TODO) return todo_done_on(it, day) ? S_TODODONE : todo_overdue_on(it, day, a->today) ? S_OVERDUE : S_TODO;
     if (it->start < 0) return S_ALLDAY;
     return S_NORMAL;
 }
@@ -467,7 +469,7 @@ static void draw_menu(app_t *a, menu_t which)
 {
     if (a->menu_rows < 2) return;
     static const menu_item_t main1[] = { {".","Today"}, {"[ ]","Week"}, {"{ }","Month"}, {"( )","Year"}, {"n p","Period"}, {"+ -","Zoom"}, {"g","Go to"}, {"Tab","Items"}, {"s","Sun"}, {"z","Slot"} };
-    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"/","Search"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
+    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"/","Search"}, {"C","Contacts"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t items1[] = { {"j k","Item"}, {"h l","Day"}, {"Enter","Edit"}, {"x","Done"}, {"m","Move"}, {"d","Delete"}, {"Esc","Leave"} };
     static const menu_item_t items2[] = { {"a","Event"}, {"T","Todo"}, {".","Today"}, {"s","Sun"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t form1[] = { {"Tab","Next field"}, {"S-Tab","Previous"}, {"Enter","Save"}, {"Esc","Cancel"} };
@@ -477,29 +479,31 @@ static void draw_menu(app_t *a, menu_t which)
     static const menu_item_t prompt1[] = { {"Enter","OK"}, {"Esc","Cancel"}, {"^U","Clear"}, {"^W","Delete word"} };
     static const menu_item_t confirm1[] = { {"y","Yes"}, {"n","No"} };
     static const menu_item_t table1[] = { {"Arrows","Cell"}, {"Enter","Edit cell"}, {"e","Edit row"}, {"a","Add"}, {"d","Delete"}, {"x","Done"}, {"PgUp/Dn","Page"} };
-    static const menu_item_t table2[] = { {"v","Next sheet"}, {"V","Previous"}, {"Esc","Calendar"}, {"?","Help"}, {"q","Quit"} };
+    static const menu_item_t table2[] = { {"v","Next sheet"}, {"V","Previous"}, {"C","Contacts"}, {"Esc","Calendar"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t slots1[] = { {"Arrows","Cell"}, {"Enter","Edit / new event"}, {"T","Todo"}, {"d","Delete"}, {"x","Done"}, {"z","Slot size"}, {"[ ]","Week"} };
     static const menu_item_t search1[] = { {"j k","Hit"}, {"Enter","Go there"}, {"e","Edit"}, {"x","Done"}, {"/","New search"}, {"Esc","Back"} };
     static const menu_item_t dayloc1[] = { {"Arrows","Day"}, {"Enter","Set place"}, {"f","Fill down"}, {"L","Range"}, {"d","Home"}, {"[ ]","Week"}, {"{ }","Month"} };
     static const menu_item_t none[] = { {"",""} };
+#define N(m) ((int)(sizeof (m) / sizeof (m)[0]))
     const menu_item_t *r1 = none, *r2 = none;
     int n1 = 0, n2 = 0;
     #define ROW(v) (v), (int)(sizeof (v) / sizeof (v)[0])
     switch (which) {
-    case MENU_MAIN:    r1 = main1; n1 = 10; r2 = main2; n2 = 11; break;
-    case MENU_ITEMS:   r1 = items1; n1 = 7; r2 = items2; n2 = 7; break;
-    case MENU_FORM:    r1 = form1; n1 = 4; r2 = form2; n2 = 5; break;
-    case MENU_PICK:    r1 = pick1; n1 = 5; r2 = pick2; n2 = 2; break;
-    case MENU_PROMPT:  r1 = prompt1; n1 = 4; break;
-    case MENU_CONFIRM: r1 = confirm1; n1 = 2; break;
-    case MENU_TABLE:   r1 = table1; n1 = 7; r2 = table2; n2 = 5; break;
-    case MENU_SLOTS:   r1 = slots1; n1 = 7; r2 = table2; n2 = 5; break;
-    case MENU_DAYLOC:  r1 = dayloc1; n1 = 7; r2 = table2; n2 = 5; break;
-    case MENU_SEARCH:  r1 = search1; n1 = 6; r2 = table2; n2 = 5; break;
+    case MENU_MAIN:    r1 = main1; n1 = N(main1); r2 = main2; n2 = N(main2); break;
+    case MENU_ITEMS:   r1 = items1; n1 = N(items1); r2 = items2; n2 = N(items2); break;
+    case MENU_FORM:    r1 = form1; n1 = N(form1); r2 = form2; n2 = N(form2); break;
+    case MENU_PICK:    r1 = pick1; n1 = N(pick1); r2 = pick2; n2 = N(pick2); break;
+    case MENU_PROMPT:  r1 = prompt1; n1 = N(prompt1); break;
+    case MENU_CONFIRM: r1 = confirm1; n1 = N(confirm1); break;
+    case MENU_TABLE:   r1 = table1; n1 = N(table1); r2 = table2; n2 = N(table2); break;
+    case MENU_SLOTS:   r1 = slots1; n1 = N(slots1); r2 = table2; n2 = N(table2); break;
+    case MENU_DAYLOC:  r1 = dayloc1; n1 = N(dayloc1); r2 = table2; n2 = N(table2); break;
+    case MENU_SEARCH:  r1 = search1; n1 = N(search1); r2 = table2; n2 = N(table2); break;
     }
     #undef ROW
     draw_menu_row(a, a->H - 2, r1, n1);
     draw_menu_row(a, a->H - 1, r2, n2);
+#undef N
 }
 
 /* ---------- month grid (year and 3-month views, and the date picker) ---------- */
@@ -545,7 +549,7 @@ static void draw_month_box(app_t *a, int x, int y, int yr, int mo, daynum_t curs
             style_t st = day_style(a, d, cursor, load);
             grid_puts(&a->g, x + 3 + c * 3, y + 2 + r, num, 2, st);
             uint32_t mark = pend ? (a->cfg.unicode ? 0x00B7 : '*') : ' ';
-            grid_put(&a->g, x + 5 + c * 3, y + 2 + r, mark, d == cursor ? st : S_TODO);
+            grid_put(&a->g, x + 5 + c * 3, y + 2 + r, mark, d == cursor ? st : d < a->today ? S_OVERDUE : S_TODO);
         }
     }
 }
@@ -621,7 +625,7 @@ static void draw_month_big(app_t *a, int cal_h)
             if (d != a->cur && d != a->today && load) st = civil_weekday(d) >= 5 ? S_DIM : S_NORMAL;
             grid_fill(&a->g, x, y, cw - 1, 1, ' ', d == a->cur ? S_CURSOR : S_NORMAL);
             grid_puts(&a->g, x, y, num, 2, st);
-            if (pend) grid_put(&a->g, x + 2, y, a->cfg.unicode ? 0x00B7 : '*', d == a->cur ? S_CURSOR : S_TODO);
+            if (pend) grid_put(&a->g, x + 2, y, a->cfg.unicode ? 0x00B7 : '*', d == a->cur ? S_CURSOR : d < a->today ? S_OVERDUE : S_TODO);
 
             int idx[MAX_DAY_ITEMS];
             int n = day_items(a, d, idx);
@@ -633,7 +637,7 @@ static void draw_month_big(app_t *a, int cal_h)
                 if (k == lines - 1 && n > lines) snprintf(lab, sizeof lab, "+%d more", n - lines + 1);
                 else item_label(a, it, lab, sizeof lab, true, d);
                 bool sel = d == a->cur && a->sel == k;
-                grid_field(&a->g, x, y + 1 + k, lab, cw - 1, item_style(it, sel, d), a->cfg.unicode);
+                grid_field(&a->g, x, y + 1 + k, lab, cw - 1, item_style(a, it, sel, d), a->cfg.unicode);
             }
         }
     }
@@ -645,23 +649,21 @@ static void todo_note(app_t *a, const item_t *it, char *out, size_t n, daynum_t 
 {
     out[0] = 0;
     if (todo_done_on(it, day)) { snprintf(out, n, "done"); return; }
-    if (it->due >= 0) {
-        long left = it->due - a->today;
-        if (left < 0) snprintf(out, n, "overdue %ld d", -left);
-        else if (left == 0) snprintf(out, n, "due today");
-        else snprintf(out, n, "due in %ld d", left);
-    } else if (it->day >= 0 && it->day < a->today) {
-        char ds[32];
-        format_day(it->day, ds, sizeof ds, false);
-        snprintf(out, n, "since %s", ds);
-    }
+    bool has_due = it->due >= 0 && !item_is_repeating(it);
+    daynum_t deadline = has_due ? it->due : day;
+    if (deadline < 0) return;
+    long left = deadline - a->today;
+    if (left < 0) snprintf(out, n, "overdue %ld d", -left);
+    else if (!has_due) return;                       /* scheduled ahead: nothing to say */
+    else if (left == 0) snprintf(out, n, "due today");
+    else snprintf(out, n, "due in %ld d", left);
 }
 
 /* one agenda line: left column (time / box) and right column (title, place, tags, note) */
 static void agenda_line(app_t *a, int y, int x, int w, const item_t *it, bool sel, bool with_day, daynum_t day)
 {
     char left[64], right[640], note[64] = "";
-    style_t st = item_style(it, sel, day);
+    style_t st = item_style(a, it, sel, day);
     if (it->kind == ITEM_TODO) {
         snprintf(left, sizeof left, "   %s", todo_box(a, it, day));
         todo_note(a, it, note, sizeof note, day);
@@ -807,23 +809,32 @@ static void draw_agenda(app_t *a, int y0, int h)
     for (int k = 0; k < n && y < last; k++, y++)
         agenda_line(a, y, lx, lw, &a->st->items[idx[k]], a->sel == k, false, a->cur);
 
-    /* open todos from other days: overdue, or unscheduled without a deadline */
+    /* open todos from other days: overdue, carried over, or unscheduled without a deadline;
+     * a repeating todo contributes its latest missed occurrence */
     int shown = 0;
     for (int i = 0; i < a->st->nitems && y < last; i++) {
         const item_t *it = &a->st->items[i];
-        if (it->kind != ITEM_TODO || it->done_day >= 0) continue;
-        bool on_day = false;
-        for (int k = 0; k < n; k++) if (idx[k] == i) on_day = true;
-        if (on_day) continue;
-        bool overdue = (it->day >= 0 && it->day < a->today) || (it->due >= 0 && it->due < a->today);
-        bool undated = it->day < 0 && it->due < 0;
-        if (!overdue && !undated) continue;
+        if (it->kind != ITEM_TODO) continue;
+        daynum_t day;
+        if (item_is_repeating(it)) {
+            day = todo_last_open_before(it, a->today);
+            if (day < 0 || day == a->cur) continue;
+        } else {
+            if (it->done_day >= 0) continue;
+            bool on_day = false;
+            for (int k = 0; k < n; k++) if (idx[k] == i) on_day = true;
+            if (on_day) continue;
+            bool open = (it->day >= 0 && it->day < a->today) || (it->due >= 0 && it->due < a->today);
+            bool undated = it->day < 0 && it->due < 0;
+            if (!open && !undated) continue;
+            day = it->day >= 0 ? it->day : it->due;
+        }
         if (shown == 0) {
             if (y + 1 >= last) break;
             grid_puts(&a->g, lx + 1, y, "open todos", lw - 2, S_LABEL);
             y++;
         }
-        agenda_line(a, y, lx, lw, it, false, true, it->day >= 0 ? it->day : it->due);
+        agenda_line(a, y, lx, lw, it, false, true, day);
         y++;
         shown++;
     }
@@ -923,7 +934,7 @@ static void draw_slots(app_t *a, daynum_t first, int ndays)
             for (int j = k + 1; j < n; j++) if (a->st->items[idx[j]].kind == ITEM_TODO || a->st->items[idx[j]].start < 0) untimed_left++;
             if (row == allday_rows - 1 && untimed_left > 0) snprintf(lab, sizeof lab, "+%d more", untimed_left + 1);
             bool sel = day == a->cur && a->sel == k;
-            grid_field(&a->g, gutter + d * cw, TOP + 1 + row, lab, cw - 1, item_style(it, sel, day), a->cfg.unicode);
+            grid_field(&a->g, gutter + d * cw, TOP + 1 + row, lab, cw - 1, item_style(a, it, sel, day), a->cfg.unicode);
             row++;
         }
     }
@@ -1071,8 +1082,9 @@ static void draw_help(app_t *a)
         "L  H               location for a range of days (from/until) / home",
         "z                  cycle slot size 5 10 15 30 60 min",
         "w  q  Q            save / save and quit / quit without saving",
-        "v                  sheets: days (slots x days), locations by date, todos,",
+        "v  V               sheets: days (slots x days), locations by date, todos,",
         "                   events, places, contacts; arrows move, Enter edits/creates",
+        "C                  the contacts sheet directly (a adds, Enter edits a cell, e the row)",
         "/                  search items and contacts (Enter jumps to the hit)",
         "M                  show / hide the key menu at the bottom",
         "?  Esc             this help / close panel or deselect",
@@ -2321,7 +2333,12 @@ static void draw_table(app_t *a)
             char v[600];
             cell_text(a, rows[ri], c, v, sizeof v);
             style_t st = selrow && c == a->tcol ? S_CURSOR : S_NORMAL;
-            if (a->table == TBL_TODOS && todo_done_on(&a->st->items[rows[ri]], todo_row_day(&a->st->items[rows[ri]])) && !(selrow && c == a->tcol)) st = S_DIM;
+            if (a->table == TBL_TODOS && !(selrow && c == a->tcol)) {
+                const item_t *it = &a->st->items[rows[ri]];
+                daynum_t rd = todo_row_day(it);
+                if (todo_done_on(it, rd)) st = S_DIM;
+                else if (todo_overdue_on(it, rd, a->today)) st = S_OVERDUE;
+            }
             if (a->table == TBL_PLACES && c == 0 && a->st->home && !strcmp(a->st->places[rows[ri]].name, a->st->home) && !(selrow && c == a->tcol)) st = S_BOLD;
             grid_field(&a->g, x, y, v, widths[c], st, a->cfg.unicode);
             x += widths[c] + 1;
@@ -2677,7 +2694,7 @@ static void draw_slots_sheet(app_t *a)
             if (first) item_label(a, it, lab, sizeof lab, minute >= 0 && it->start % a->sheet_slot != 0, day);
             else snprintf(lab, sizeof lab, "%s", a->cfg.unicode ? "\xE2\x94\x86" : ":");
             if (n > 1) { size_t l = strlen(lab); snprintf(lab + l, sizeof lab - l, " +%d", n - 1); }
-            style_t es = cursor ? S_CURSOR : it->kind == ITEM_TODO ? item_style(it, false, day) : minute < 0 ? S_ALLDAY : S_EVENT;
+            style_t es = cursor ? S_CURSOR : it->kind == ITEM_TODO ? item_style(a, it, false, day) : minute < 0 ? S_ALLDAY : S_EVENT;
             if (!first && !cursor) es = S_EVENT;
             grid_fill(&a->g, x, y, cw - 1, 1, ' ', es);
             grid_field(&a->g, x, y, lab, cw - 1, es, a->cfg.unicode);
@@ -2767,6 +2784,7 @@ static bool slots_sheet_key(app_t *a, int k)
                 a->sheet_slot = sizes[(i + 1) % 5]; a->trow = a->trow == 0 ? 0 : minute / a->sheet_slot + 1; a->trow0 = 0; set_msg(a, false, "slot size %d min", a->sheet_slot); return true; }
     case 'v': set_table(a, a->table == TBL_LAST ? TBL_SLOTS : a->table + 1); return true;
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
+    case 'C': set_table(a, TBL_CONTACTS); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
@@ -2891,6 +2909,7 @@ static bool dayloc_key(app_t *a, int k)
     case 'd': if (a->st->home) { store_set_loc_range(a->st, a->tbase + a->trow, a->tbase + a->trow, a->st->home); save(a); } return true;
     case 'v': set_table(a, a->table == TBL_LAST ? TBL_SLOTS : a->table + 1); return true;
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
+    case 'C': set_table(a, TBL_CONTACTS); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
@@ -2960,7 +2979,7 @@ static void draw_search_sheet(app_t *a)
             if (it->kind == ITEM_EVENT && it->start >= 0) snprintf(time, sizeof time, "%02d:%02d  ", it->start / 60, it->start % 60);
             snprintf(right, sizeof right, "%s%s%s%s%s%s%s%s", it->kind == ITEM_EVENT ? "event  " : "todo   ", time, lab,
                      it->at ? "  @" : "", it->at ? it->at : "", it->who ? "  \xE2\x98\x8E " : "", it->who ? it->who : "", item_is_repeating(it) ? "  \xE2\x86\xBB" : "");
-            style_t st = sel ? S_CURSOR : item_style(it, false, hits[ri].day);
+            style_t st = sel ? S_CURSOR : item_style(a, it, false, hits[ri].day);
             grid_field(&a->g, 1, y, left, 16, sel ? S_CURSOR : S_DIM, a->cfg.unicode);
             grid_field(&a->g, 18, y, right, a->W - 19, st, a->cfg.unicode);
         } else {
@@ -3028,6 +3047,7 @@ static bool search_key(app_t *a, int k)
         return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = a->table_before_search == TBL_SEARCH ? TBL_NONE : a->table_before_search; return true;
     case 'v': set_table(a, TBL_SLOTS); return true;
+    case 'C': set_table(a, TBL_CONTACTS); return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
     }
@@ -3063,6 +3083,7 @@ static bool table_key(app_t *a, int k)
         return true;
     case 'v': set_table(a, a->table == TBL_LAST ? TBL_SLOTS : a->table + 1); return true;
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
+    case 'C': set_table(a, TBL_CONTACTS); return true;
     case '/': start_search(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;   /* global keys */
@@ -3153,6 +3174,7 @@ static void handle_key(app_t *a, int k)
     case '(': a->cur = civil_add_years(a->cur, -1); a->sel = -1; itemmode_resync(a); return;
     case 'M': a->menu_rows = a->menu_rows ? 0 : 2; return;
     case 'v': set_table(a, TBL_SLOTS); return;
+    case 'C': set_table(a, TBL_CONTACTS); return;
     case '/': start_search(a); return;
     case 'g': {
         daynum_t d;

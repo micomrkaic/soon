@@ -41,6 +41,16 @@ as `tz <IANA name> (UTC offset)`, sunrise-sunset, civil twilight and day
 length, dropping segments from the right on narrow terminals. `s` opens the
 full panel with nautical and astronomical twilight.
 
+The agenda panel lists the cursor day's items, then "open todos" from other
+days — overdue, or unscheduled without a deadline — then what is coming up.
+A todo is overdue when it is not done and its due date has passed, or its
+scheduled day if it has no due date; an occurrence of a repeating todo is
+judged by its own day. Overdue todos keep appearing until they are marked
+done, and they use the `overdue` colour (bright magenta bold by default)
+everywhere: agenda panel, month cells, week and day views, the todos sheet,
+search hits, and the pending-todo dot on a past day. The note beside them
+says by how much, so weight and text carry it without colour.
+
 ## Keys
 
     h j k l / arrows   move by day; by time slot in week and day views
@@ -59,7 +69,8 @@ full panel with nautical and astronomical twilight.
     s                  sun and twilight panel for the day's location
     L  H               location for a range of days / home location
     z                  cycle slot size 5 10 15 30 60
-    v                  sheets (see below)
+    v  V               sheets (see below), forward / backward
+    C                  contacts sheet
     /                  search items and contacts; Enter jumps to the hit
     w  q  Q            save / save and quit / quit without saving
     M                  show / hide the key menu
@@ -110,12 +121,12 @@ Esc returns to the calendar). The first three are the working sheets:
   place down to a date chosen on the calendar; `L` opens the range form;
   `d` sets the day back to home. A change of place is underlined.
 - **todos** — one row per todo: done, title, scheduled, due, priority,
-  who, tags. Enter edits the cell with the matching control (calendar,
+  who, tags; overdue rows are shown in the `overdue` colour. Enter edits the cell with the matching control (calendar,
   list...), `e` opens the row's form, `a` adds, `d` deletes, `x` toggles.
 
 Behind them: **events**, **places** (name, coordinates, zone, uses;
 renaming updates everything that refers to the place, a place in use
-cannot be deleted) and **contacts**.
+cannot be deleted) and **contacts**, which `C` opens directly from anywhere.
 
 ### Recurrence
 
@@ -149,8 +160,9 @@ prints a commented file with the defaults to start from:
     palette: default       default | mono (weight and inverse only)
     color event: bright-white on blue bold
     color todo: 11         roles: cursor today busy busier event eventsel allday
-                           todo tododone sel box panel err now field focus rule
-                           titlebar; colours by name, bright-name, or 0-15
+                           todo overdue tododone sel box panel err now field
+                           focus rule titlebar; colours by name, bright-name,
+                           or 0-15
 
 Lines that fail to parse are reported at startup and ignored.
 
@@ -168,7 +180,9 @@ A second file, `contacts.soon` next to the agenda (or `-c FILE`,
 `$SOON_CONTACTS`), holds name, phone, email, place, tags and a note per
 person. Events and todos have a Who field that picks from it, so "call
 Simon" carries his number: the details panel shows phone and email of the
-linked contact. The contacts sheet edits them; `soon import vcf`
+linked contact. The contacts sheet (`C`) shows and edits them: `a` adds a
+person through a form, Enter edits the cell under the cursor, `e` opens
+the row's form, `d` deletes; `soon import vcf`
 reads a vCard file from a phone or mail client and `soon export vcf`
 writes one.
 

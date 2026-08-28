@@ -554,6 +554,21 @@ bool todo_done_on(const item_t *it, daynum_t day)
     return day <= it->done_day;
 }
 
+bool todo_overdue_on(const item_t *it, daynum_t day, daynum_t today)
+{
+    if (it->kind != ITEM_TODO || todo_done_on(it, day)) return false;
+    daynum_t deadline = it->due >= 0 && !item_is_repeating(it) ? it->due : day;
+    return deadline >= 0 && deadline < today;
+}
+
+daynum_t todo_last_open_before(const item_t *it, daynum_t today)
+{
+    if (it->kind != ITEM_TODO || it->day < 0) return -1;
+    if (!item_is_repeating(it)) return it->done_day < 0 && it->day < today ? it->day : -1;
+    daynum_t d = item_prev_occurrence(it, today);
+    return d >= 0 && !todo_done_on(it, d) ? d : -1;
+}
+
 void todo_toggle_on(item_t *it, daynum_t day, daynum_t today, int now_min)
 {
     if (!item_is_repeating(it)) {
@@ -796,7 +811,7 @@ char *store_serialize(store_t *st)
         sb_printf(&b, "place %s | %.4f %.4f | %s\n", st->places[i].name, st->places[i].lat, st->places[i].lon,
                   st->places[i].zone ? st->places[i].zone : "UTC");
     if (st->home) sb_printf(&b, "home %s\n", st->home);
-    qsort(st->locs, (size_t)st->nlocs, sizeof st->locs[0], cmp_loc);
+    if (st->nlocs > 1) qsort(st->locs, (size_t)st->nlocs, sizeof st->locs[0], cmp_loc);   /* locs may be NULL when empty */
     for (int i = 0; i < st->nlocs; i++) {
         char ds[16];
         model_format_date(st->locs[i].from, ds, sizeof ds);

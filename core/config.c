@@ -27,7 +27,7 @@
 #include "text.h"
 
 const char *const config_role_names[N_ROLES] = {
-    "cursor", "today", "busy", "busier", "event", "eventsel", "allday", "todo", "tododone", "sel",
+    "cursor", "today", "busy", "busier", "event", "eventsel", "allday", "todo", "overdue", "tododone", "sel",
     "box", "panel", "err", "now", "field", "focus", "rule", "titlebar"
 };
 
@@ -162,13 +162,14 @@ const char *config_template(void)
         "# default | mono   (mono: no colours, only bold / dim / inverse)\n"
         "palette: default\n"
         "# individual roles: color <role>: <fg> [on <bg>] [bold] [dim] [underline] [inverse]\n"
-        "# roles: cursor today busy busier event eventsel allday todo tododone sel\n"
-        "#        box panel err now field focus rule titlebar\n"
+        "# roles: cursor today busy busier event eventsel allday todo overdue tododone\n"
+        "#        sel box panel err now field focus rule titlebar\n"
         "# colours: default black red green yellow blue magenta cyan white, bright-<colour>, 0-15\n"
         "# the defaults are deutan-safe: blue, yellow, magenta, cyan; never red against green\n"
         "#color cursor: black on bright-yellow\n"
         "#color event: bright-white on blue\n"
         "#color todo: bright-yellow\n"
+        "#color overdue: bright-magenta bold\n"
         "#color today: bright-blue bold underline\n";
 }
 
