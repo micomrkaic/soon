@@ -23,12 +23,13 @@
  *   work_start: 08:00        first hour shown; rows outside work hours are dimmed
  *   work_end: 18:00
  *   first_weekday: monday    monday | sunday
+ *   due_soon: 3              days ahead within which a todo with a due date is "due soon"
  *   menu: on                 key menu at the bottom
  *   unicode: auto            auto | on | off
- *   palette: default         default | mono (mono uses weight and inverse only)
- *   color <role>: <fg> [on <bg>] [bold] [dim] [underline] [inverse]
- *       roles: cursor today busy busier event eventsel allday todo overdue tododone
- *              sel box panel err now field focus rule titlebar
+ *   palette: default         default | mono (mono uses no colour: weight, underline, italic, inverse)
+ *   color <role>: <fg> [on <bg>] [bold] [dim] [underline] [inverse] [italic]
+ *       roles: cursor today busy busier event eventsel allday todo overdue duesoon
+ *              tododone sel box panel err now field focus rule titlebar
  *       colors: default black red green yellow blue magenta cyan white,
  *               bright-<name>, or 0-15
  */
@@ -40,7 +41,7 @@
 
 enum {
     ROLE_CURSOR, ROLE_TODAY, ROLE_BUSY, ROLE_BUSIER, ROLE_EVENT, ROLE_EVENTSEL, ROLE_ALLDAY, ROLE_TODO,
-    ROLE_OVERDUE, ROLE_TODODONE, ROLE_SEL, ROLE_BOX, ROLE_PANEL, ROLE_ERR, ROLE_NOW, ROLE_FIELD, ROLE_FOCUS, ROLE_RULE,
+    ROLE_OVERDUE, ROLE_DUESOON, ROLE_TODODONE, ROLE_SEL, ROLE_BOX, ROLE_PANEL, ROLE_ERR, ROLE_NOW, ROLE_FIELD, ROLE_FOCUS, ROLE_RULE,
     ROLE_TITLEBAR, N_ROLES
 };
 
@@ -50,6 +51,7 @@ typedef struct {
     int slot, sheet_slot;
     int work_start, work_end;     /* minutes */
     int first_weekday;            /* 0 = Monday ... 6 = Sunday */
+    int due_soon;                 /* days; a todo due within this many days is "due soon" */
     int menu;                     /* 1 / 0 */
     int unicode;                  /* -1 auto, 1, 0 */
     char palette[16];

@@ -27,7 +27,7 @@
 #include "text.h"
 
 const char *const config_role_names[N_ROLES] = {
-    "cursor", "today", "busy", "busier", "event", "eventsel", "allday", "todo", "overdue", "tododone", "sel",
+    "cursor", "today", "busy", "busier", "event", "eventsel", "allday", "todo", "overdue", "duesoon", "tododone", "sel",
     "box", "panel", "err", "now", "field", "focus", "rule", "titlebar"
 };
 
@@ -39,6 +39,7 @@ void config_defaults(config_t *c)
     c->work_start = 8 * 60;
     c->work_end = 18 * 60;
     c->first_weekday = 0;
+    c->due_soon = 3;
     c->menu = 1;
     c->unicode = -1;
     snprintf(c->palette, sizeof c->palette, "default");
@@ -71,6 +72,7 @@ static bool parse_style(const char *v, cfg_style_t *st)
         if (str_ieq(tok, "dim")) { s.attr |= 2; continue; }
         if (str_ieq(tok, "underline")) { s.attr |= 4; continue; }
         if (str_ieq(tok, "inverse")) { s.attr |= 8; continue; }
+        if (str_ieq(tok, "italic")) { s.attr |= 16; continue; }
         int c = color_code(tok);
         if (c < 0) return false;
         if (on) s.bg = (uint8_t)c; else s.fg = (uint8_t)c;
@@ -117,6 +119,10 @@ int config_parse(config_t *c, const char *text, char *err, int errlen)
             n = atoi(v);
             ok = n == 5 || n == 10 || n == 15 || n == 30 || n == 60;
             if (ok) { if (key[1] == 'l') c->slot = n; else c->sheet_slot = n; }
+        } else if (!strcmp(key, "due_soon")) {
+            n = atoi(v);
+            ok = n >= 0 && n <= 365 && (*v == '0' || n > 0);
+            if (ok) c->due_soon = n;
         } else if (!strcmp(key, "work_start")) ok = parse_minutes(v, &c->work_start);
         else if (!strcmp(key, "work_end")) ok = parse_minutes(v, &c->work_end);
         else if (!strcmp(key, "first_weekday")) {
@@ -155,14 +161,16 @@ const char *config_template(void)
         "work_end: 18:00\n"
         "# monday | sunday | saturday (week numbers stay ISO)\n"
         "first_weekday: monday\n"
+        "# a todo whose due date falls within this many days is shown as due soon (0 = today only)\n"
+        "due_soon: 3\n"
         "# key menu at the bottom: on | off\n"
         "menu: on\n"
         "# box and marker glyphs: auto | on | off\n"
         "unicode: auto\n"
-        "# default | mono   (mono: no colours, only bold / dim / inverse)\n"
+        "# default | mono   (mono: no colours, only bold / dim / underline / italic / inverse)\n"
         "palette: default\n"
-        "# individual roles: color <role>: <fg> [on <bg>] [bold] [dim] [underline] [inverse]\n"
-        "# roles: cursor today busy busier event eventsel allday todo overdue tododone\n"
+        "# individual roles: color <role>: <fg> [on <bg>] [bold] [dim] [underline] [inverse] [italic]\n"
+        "# roles: cursor today busy busier event eventsel allday todo overdue duesoon tododone\n"
         "#        sel box panel err now field focus rule titlebar\n"
         "# colours: default black red green yellow blue magenta cyan white, bright-<colour>, 0-15\n"
         "# the defaults are deutan-safe: blue, yellow, magenta, cyan; never red against green\n"
@@ -170,6 +178,8 @@ const char *config_template(void)
         "#color event: bright-white on blue\n"
         "#color todo: bright-yellow\n"
         "#color overdue: bright-magenta bold\n"
+        "# due soon: use underline instead of italic if your terminal lacks italics\n"
+        "#color duesoon: bright-yellow italic\n"
         "#color today: bright-blue bold underline\n";
 }
 

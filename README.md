@@ -42,14 +42,21 @@ length, dropping segments from the right on narrow terminals. `s` opens the
 full panel with nautical and astronomical twilight.
 
 The agenda panel lists the cursor day's items, then "open todos" from other
-days — overdue, or unscheduled without a deadline — then what is coming up.
-A todo is overdue when it is not done and its due date has passed, or its
-scheduled day if it has no due date; an occurrence of a repeating todo is
-judged by its own day. Overdue todos keep appearing until they are marked
-done, and they use the `overdue` colour (bright magenta bold by default)
-everywhere: agenda panel, month cells, week and day views, the todos sheet,
+days, then what is coming up. A todo has a scheduled day (where it sits in
+the calendar) and optionally a due date (its deadline). It is **overdue**
+when it is not done and its due date has passed — or its scheduled day, if
+it has no due date; an occurrence of a repeating todo is judged by its own
+day. It is **due soon** when its due date is today or within `due_soon`
+days (3 by default). Overdue todos keep appearing under "open todos" until
+they are marked done, dated by their deadline so the "overdue 2 d" note
+reads against the right day, and nothing listed there is repeated under
+"soon". Overdue uses the `overdue` colour (bright magenta bold) and due
+soon the `duesoon` colour (bright yellow italic) everywhere a todo is
+drawn: agenda panel, month cells, week and day views, the todos sheet,
 search hits, and the pending-todo dot on a past day. The note beside them
-says by how much, so weight and text carry it without colour.
+says by how much, so weight and text carry it without colour. If your
+terminal has no italics (`screen`, some `tmux` setups), set
+`color duesoon: bright-yellow underline`.
 
 ## Keys
 
@@ -121,7 +128,7 @@ Esc returns to the calendar). The first three are the working sheets:
   place down to a date chosen on the calendar; `L` opens the range form;
   `d` sets the day back to home. A change of place is underlined.
 - **todos** — one row per todo: done, title, scheduled, due, priority,
-  who, tags; overdue rows are shown in the `overdue` colour. Enter edits the cell with the matching control (calendar,
+  who, tags; overdue and due-soon rows use their colours. Enter edits the cell with the matching control (calendar,
   list...), `e` opens the row's form, `a` adds, `d` deletes, `x` toggles.
 
 Behind them: **events**, **places** (name, coordinates, zone, uses;
@@ -155,14 +162,17 @@ prints a commented file with the defaults to start from:
     work_start: 08:00      views open here; hours outside are dimmed
     work_end: 18:00
     first_weekday: monday  monday | sunday | saturday (week numbers stay ISO)
+    due_soon: 3            days ahead within which a due date is "due soon"
     menu: on
     unicode: auto          auto | on | off
-    palette: default       default | mono (weight and inverse only)
+    palette: default       default | mono (no colour: weight, underline,
+                           italic, inverse)
     color event: bright-white on blue bold
     color todo: 11         roles: cursor today busy busier event eventsel allday
-                           todo overdue tododone sel box panel err now field
-                           focus rule titlebar; colours by name, bright-name,
-                           or 0-15
+                           todo overdue duesoon tododone sel box panel err now
+                           field focus rule titlebar; colours by name,
+                           bright-name, or 0-15; bold dim underline inverse
+                           italic
 
 Lines that fail to parse are reported at startup and ignored.
 

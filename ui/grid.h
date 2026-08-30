@@ -30,7 +30,7 @@
 /* colors: 0..15 are the ANSI palette; 255 = terminal default */
 #define C_DEFAULT 255
 
-enum { A_BOLD = 1, A_DIM = 2, A_UL = 4, A_INV = 8 };
+enum { A_BOLD = 1, A_DIM = 2, A_UL = 4, A_INV = 8, A_ITALIC = 16 };
 
 typedef struct { uint8_t fg, bg, attr; } style_t;
 

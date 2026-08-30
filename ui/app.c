@@ -91,7 +91,7 @@ typedef struct {
 /* ---------- palette (deutan-safe defaults; overridable from the config file) ---------- */
 
 typedef struct {
-    style_t cursor, today, busy, busier, event, eventsel, allday, todo, overdue, tododone, sel,
+    style_t cursor, today, busy, busier, event, eventsel, allday, todo, overdue, duesoon, tododone, sel,
             box, panel, err, now, field, focus, rule, titlebar;
 } palette_t;
 
@@ -112,6 +112,7 @@ static palette_t pal;
 #define S_ALLDAY   pal.allday
 #define S_TODO     pal.todo
 #define S_OVERDUE  pal.overdue
+#define S_DUESOON  pal.duesoon
 #define S_TODODONE pal.tododone
 #define S_SEL      pal.sel
 #define S_BOX      pal.box
@@ -135,6 +136,7 @@ static void palette_init(const config_t *c)
     pal.allday   = mono ? style(C_DEFAULT, C_DEFAULT, A_BOLD) : style(14, C_DEFAULT, A_BOLD);
     pal.todo     = mono ? style(C_DEFAULT, C_DEFAULT, 0) : style(11, C_DEFAULT, 0);
     pal.overdue  = mono ? style(C_DEFAULT, C_DEFAULT, A_BOLD) : style(13, C_DEFAULT, A_BOLD);
+    pal.duesoon  = mono ? style(C_DEFAULT, C_DEFAULT, A_ITALIC) : style(11, C_DEFAULT, A_ITALIC);
     pal.tododone = style(C_DEFAULT, C_DEFAULT, A_DIM);
     pal.sel      = mono ? style(C_DEFAULT, C_DEFAULT, A_INV | A_BOLD) : style(0, 13, A_BOLD);
     pal.box      = mono ? style(C_DEFAULT, C_DEFAULT, A_BOLD) : style(12, C_DEFAULT, 0);
@@ -146,7 +148,7 @@ static void palette_init(const config_t *c)
     pal.rule     = mono ? style(C_DEFAULT, C_DEFAULT, A_DIM) : style(12, C_DEFAULT, 0);
     if (!c) return;
     style_t *slots[N_ROLES] = { &pal.cursor, &pal.today, &pal.busy, &pal.busier, &pal.event, &pal.eventsel, &pal.allday, &pal.todo,
-                                &pal.overdue, &pal.tododone, &pal.sel, &pal.box, &pal.panel, &pal.err, &pal.now, &pal.field, &pal.focus, &pal.rule, &pal.titlebar };
+                                &pal.overdue, &pal.duesoon, &pal.tododone, &pal.sel, &pal.box, &pal.panel, &pal.err, &pal.now, &pal.field, &pal.focus, &pal.rule, &pal.titlebar };
     for (int i = 0; i < N_ROLES; i++)
         if (c->color_set[i]) *slots[i] = style(c->colors[i].fg, c->colors[i].bg, c->colors[i].attr);
 }
@@ -257,10 +259,17 @@ static void item_label(app_t *a, const item_t *it, char *out, size_t n, bool wit
     else snprintf(out, n, "%02d:%02d %s", it->start / 60, it->start % 60, title);
 }
 
+static int due_horizon(const app_t *a) { return a->cfg.conf ? a->cfg.conf->due_soon : 3; }
+
 static style_t item_style(const app_t *a, const item_t *it, bool sel, daynum_t day)
 {
     if (sel) return S_SEL;
-    if (it->kind == ITEM_TODO) return todo_done_on(it, day) ? S_TODODONE : todo_overdue_on(it, day, a->today) ? S_OVERDUE : S_TODO;
+    if (it->kind == ITEM_TODO) {
+        if (todo_done_on(it, day)) return S_TODODONE;
+        if (todo_overdue_on(it, day, a->today)) return S_OVERDUE;
+        if (todo_due_soon_on(it, day, a->today, due_horizon(a))) return S_DUESOON;
+        return S_TODO;
+    }
     if (it->start < 0) return S_ALLDAY;
     return S_NORMAL;
 }
@@ -770,6 +779,25 @@ static void draw_details(app_t *a, const item_t *it, int x, int y, int w, int h)
     if (row < last) { snprintf(s, sizeof s, "id %s", it->id); grid_field(&a->g, x, row, s, w, S_DIM, a->cfg.unicode); }
 }
 
+/* the date a todo is listed under in the "open todos" section, or OPEN_NONE when it does not belong there.
+ * It belongs there when it is open and past its deadline or its scheduled day, or open and undated (then -1:
+ * no date). The date shown is the deadline, so an "overdue 2 d" note reads against the right day.
+ * A repeating todo contributes its latest missed occurrence. */
+#define OPEN_NONE (-2)
+static daynum_t open_todo_day(const app_t *a, const item_t *it)
+{
+    if (it->kind != ITEM_TODO) return OPEN_NONE;
+    if (item_is_repeating(it)) {
+        daynum_t d = todo_last_open_before(it, a->today);
+        return d >= 0 ? d : OPEN_NONE;
+    }
+    if (it->done_day >= 0) return OPEN_NONE;
+    if (it->day < 0 && it->due < 0) return -1;
+    bool open = (it->day >= 0 && it->day < a->today) || (it->due >= 0 && it->due < a->today);
+    if (!open) return OPEN_NONE;
+    return it->due >= 0 ? it->due : it->day;
+}
+
 static void draw_agenda(app_t *a, int y0, int h)
 {
     if (h < 2) return;
@@ -809,25 +837,19 @@ static void draw_agenda(app_t *a, int y0, int h)
     for (int k = 0; k < n && y < last; k++, y++)
         agenda_line(a, y, lx, lw, &a->st->items[idx[k]], a->sel == k, false, a->cur);
 
-    /* open todos from other days: overdue, carried over, or unscheduled without a deadline;
-     * a repeating todo contributes its latest missed occurrence */
+    /* open todos from other days; a repeating todo contributes its latest missed occurrence */
     int shown = 0;
     for (int i = 0; i < a->st->nitems && y < last; i++) {
         const item_t *it = &a->st->items[i];
         if (it->kind != ITEM_TODO) continue;
-        daynum_t day;
+        daynum_t day = open_todo_day(a, it);
         if (item_is_repeating(it)) {
-            day = todo_last_open_before(it, a->today);
             if (day < 0 || day == a->cur) continue;
         } else {
-            if (it->done_day >= 0) continue;
+            if (day == OPEN_NONE) continue;
             bool on_day = false;
             for (int k = 0; k < n; k++) if (idx[k] == i) on_day = true;
             if (on_day) continue;
-            bool open = (it->day >= 0 && it->day < a->today) || (it->due >= 0 && it->due < a->today);
-            bool undated = it->day < 0 && it->due < 0;
-            if (!open && !undated) continue;
-            day = it->day >= 0 ? it->day : it->due;
         }
         if (shown == 0) {
             if (y + 1 >= last) break;
@@ -853,7 +875,11 @@ static void draw_agenda(app_t *a, int y0, int h)
         }
         for (int k = 0; k < dn && y < last; k++) {
             const item_t *it = &a->st->items[di[k]];
-            if (it->kind == ITEM_TODO && todo_done_on(it, d)) continue;
+            if (it->kind == ITEM_TODO) {
+                if (todo_done_on(it, d)) continue;
+                daynum_t od = open_todo_day(a, it);                           /* already listed under open todos */
+                if (od != OPEN_NONE && (!item_is_repeating(it) || od == d)) continue;
+            }
             if (it->kind == ITEM_EVENT && !item_occurs_on(it, d)) continue;     /* multi-day: list once, on its first day */
             agenda_line(a, y, lx, lw, it, false, true, d);
             y++;
@@ -2338,6 +2364,7 @@ static void draw_table(app_t *a)
                 daynum_t rd = todo_row_day(it);
                 if (todo_done_on(it, rd)) st = S_DIM;
                 else if (todo_overdue_on(it, rd, a->today)) st = S_OVERDUE;
+                else if (todo_due_soon_on(it, rd, a->today, due_horizon(a))) st = S_DUESOON;
             }
             if (a->table == TBL_PLACES && c == 0 && a->st->home && !strcmp(a->st->places[rows[ri]].name, a->st->home) && !(selrow && c == a->tcol)) st = S_BOLD;
             grid_field(&a->g, x, y, v, widths[c], st, a->cfg.unicode);

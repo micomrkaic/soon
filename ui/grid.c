@@ -207,6 +207,7 @@ static void emit_style(outbuf_t *b, style_t st)
     if (st.attr & A_DIM) n += snprintf(seq + n, sizeof seq - (size_t)n, ";2");
     if (st.attr & A_UL) n += snprintf(seq + n, sizeof seq - (size_t)n, ";4");
     if (st.attr & A_INV) n += snprintf(seq + n, sizeof seq - (size_t)n, ";7");
+    if (st.attr & A_ITALIC) n += snprintf(seq + n, sizeof seq - (size_t)n, ";3");
     if (st.fg != C_DEFAULT) n += snprintf(seq + n, sizeof seq - (size_t)n, ";%d", st.fg < 8 ? 30 + st.fg : 90 + st.fg - 8);
     if (st.bg != C_DEFAULT) n += snprintf(seq + n, sizeof seq - (size_t)n, ";%d", st.bg < 8 ? 40 + st.bg : 100 + st.bg - 8);
     n += snprintf(seq + n, sizeof seq - (size_t)n, "m");

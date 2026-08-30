@@ -561,6 +561,12 @@ bool todo_overdue_on(const item_t *it, daynum_t day, daynum_t today)
     return deadline >= 0 && deadline < today;
 }
 
+bool todo_due_soon_on(const item_t *it, daynum_t day, daynum_t today, int horizon)
+{
+    if (it->kind != ITEM_TODO || it->due < 0 || item_is_repeating(it) || todo_done_on(it, day)) return false;
+    return it->due >= today && it->due - today <= horizon;
+}
+
 daynum_t todo_last_open_before(const item_t *it, daynum_t today)
 {
     if (it->kind != ITEM_TODO || it->day < 0) return -1;

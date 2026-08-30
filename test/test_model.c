@@ -303,6 +303,19 @@ int main(void)
             CHECK(!todo_overdue_on(&o, o.day, today));
             o.done_day = -1; o.day = -1;
             CHECK(todo_overdue_on(&o, o.due, today));                        /* unscheduled with a deadline */
+            /* due soon: an explicit due date within the horizon, today included */
+            o.due = today + 3;
+            CHECK(todo_due_soon_on(&o, o.day, today, 3));
+            CHECK(!todo_due_soon_on(&o, o.day, today, 2));
+            o.due = today;
+            CHECK(todo_due_soon_on(&o, o.day, today, 0));
+            o.due = today - 1;
+            CHECK(!todo_due_soon_on(&o, o.day, today, 3));                   /* overdue is not soon */
+            o.due = -1; o.day = today + 1;
+            CHECK(!todo_due_soon_on(&o, o.day, today, 3));                   /* a plan, not a deadline */
+            o.due = today + 1; o.done_day = today;
+            CHECK(!todo_due_soon_on(&o, o.day, today, 3));
+            o.done_day = -1; o.day = -1; o.due = civil_to_days(2026, 9, 9);
             CHECK_EQ(todo_last_open_before(&o, today), -1);
             o.day = civil_to_days(2026, 9, 8);
             CHECK_EQ(todo_last_open_before(&o, today), o.day);
