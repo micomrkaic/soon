@@ -24,6 +24,7 @@
  *   work_end: 18:00
  *   first_weekday: monday    monday | sunday
  *   due_soon: 3              days ahead within which a todo with a due date is "due soon"
+ *   tags: medical financial  predefined tags offered in the tag pane and the # filter
  *   menu: on                 key menu at the bottom
  *   unicode: auto            auto | on | off
  *   palette: default         default | mono (mono uses no colour: weight, underline, italic, inverse)
@@ -52,6 +53,7 @@ typedef struct {
     int work_start, work_end;     /* minutes */
     int first_weekday;            /* 0 = Monday ... 6 = Sunday */
     int due_soon;                 /* days; a todo due within this many days is "due soon" */
+    char tags[512];               /* predefined tags, space-separated */
     int menu;                     /* 1 / 0 */
     int unicode;                  /* -1 auto, 1, 0 */
     char palette[16];

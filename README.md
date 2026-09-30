@@ -58,6 +58,29 @@ says by how much, so weight and text carry it without colour. If your
 terminal has no italics (`screen`, some `tmux` setups), set
 `color duesoon: bright-yellow underline`.
 
+Tags organise all of this. Every event, todo, and contact takes a
+space-separated `tags:` line; the Tags field in the forms shows a pane of
+every tag known — the `tags:` list from the config plus every tag already
+in use — where up/down pick and the right arrow adds or removes the
+highlighted one (typing works too, and new words simply become new tags).
+`#` narrows the whole program to one tag: calendar views, agenda panel,
+month-cell dots and counts, and the todos/events sheets all show only
+matching items until the filter is cleared, and the title bar shows the
+active tag. `A` opens the upcoming view: open todos in deadline order,
+then every occurrence for the year ahead, as one scrollable list — with a
+filter active this is the long-term view of one area of life ("all
+medical items"), and `Enter` jumps to any row, `e` edits it, `x` marks it
+done. Search (`/`) stays global and ignores the filter.
+
+In forms, `Enter` confirms the field and moves to the next; on the last
+field it saves. `Ctrl-Enter` saves from anywhere on terminals that can
+send it (xterm, VTE/GNOME Terminal, kitty, foot, WezTerm — `soon` asks
+via modifyOtherKeys and the kitty keyboard protocol; Terminal.app cannot),
+and `Ctrl-S` saves everywhere. Up/down move between fields wherever a
+field does not need the vertical arrows itself (the date calendar, time
+and duration strips, and pick lists do). `.` is a synonym for `t` (today)
+on the date calendar.
+
 ## Keys
 
     h j k l / arrows   move by day; by time slot in week and day views
@@ -78,6 +101,8 @@ terminal has no italics (`screen`, some `tmux` setups), set
     z                  cycle slot size 5 10 15 30 60
     v  V               sheets (see below), forward / backward
     C                  contacts sheet
+    A                  upcoming: open todos, then a year of occurrences, as a list
+    #                  filter every view down to one tag (press again + Ctrl-U to clear)
     /                  search items and contacts; Enter jumps to the hit
     w  q  Q            save / save and quit / quit without saving
     M                  show / hide the key menu
@@ -163,6 +188,7 @@ prints a commented file with the defaults to start from:
     work_end: 18:00
     first_weekday: monday  monday | sunday | saturday (week numbers stay ISO)
     due_soon: 3            days ahead within which a due date is "due soon"
+    tags: medical car      predefined tags for the Tags pane and the # filter
     menu: on
     unicode: auto          auto | on | off
     palette: default       default | mono (no colour: weight, underline,

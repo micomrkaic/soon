@@ -69,12 +69,16 @@ int term_open(void)
     sa.sa_handler = on_winch;
     sigaction(SIGWINCH, &sa, NULL);
     term_write("\x1b[?1049h\x1b[?25l\x1b[H\x1b[2J", 21);
+    /* ask for modified keys (Ctrl-Enter): xterm modifyOtherKeys=1 and the kitty
+     * disambiguate flag; terminals that know neither ignore both lines */
+    term_write("\x1b[>4;1m\x1b[>1u", 13);
     return 0;
 }
 
 void term_close(void)
 {
     if (!raw_on) return;
+    term_write("\x1b[<u\x1b[>4;0m", 11);
     term_write("\x1b[0m\x1b[?25h\x1b[?1049l", 18);
     tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig);
     raw_on = 0;
@@ -109,7 +113,21 @@ static int read_byte(int timeout_ms)
     }
 }
 
-static int csi_key(int final, int param)
+/* a modified printable or C0 key from a CSI-u (kitty) or CSI 27;mod;code~ (xterm
+ * modifyOtherKeys) report; mods is the parameter value minus one: 1 shift, 2 alt, 4 ctrl */
+static int modified_key(int cp, int mods)
+{
+    if (cp == 13) return mods & 4 ? KEY_CTRL_ENTER : KEY_ENTER;
+    if (cp == 27 && !mods) return KEY_ESC;
+    if (cp == 9) return mods & 1 ? KEY_BTAB : KEY_TAB;
+    if (cp == 127) return KEY_BACKSPACE;
+    if ((mods & 4) && cp >= 63 && cp < 128) return KEY_CTRL(cp);
+    if ((mods & 2) && cp >= 32 && cp < 127) return KEY_ALT(cp);
+    if (!(mods & ~1) && cp >= 32) return cp;
+    return KEY_NONE;
+}
+
+static int csi_key(int final, const int *p)
 {
     switch (final) {
     case 'A': return KEY_UP;
@@ -123,8 +141,10 @@ static int csi_key(int final, int param)
     case 'Q': return KEY_F2;
     case 'R': return KEY_F3;
     case 'S': return KEY_F4;
+    case 'u': return modified_key(p[0], (p[1] ? p[1] : 1) - 1);
     case '~':
-        switch (param) {
+        if (p[0] == 27) return modified_key(p[2], (p[1] ? p[1] : 1) - 1);
+        switch (p[0]) {
         case 1: case 7: return KEY_HOME;
         case 4: case 8: return KEY_END;
         case 2: return KEY_INS;
@@ -152,16 +172,16 @@ int term_read_key(int timeout_ms)
         if (c == KEY_RESIZE) { winch = 1; return KEY_ESC; }
         if (c < 0) return KEY_ESC;
         if (c != '[' && c != 'O') return c >= 32 && c < 127 ? KEY_ALT(c) : KEY_ESC;   /* Meta/Alt + key */
-        int param = 0, final = 0;
-        for (int i = 0; i < 8; i++) {
+        int p[3] = { 0, 0, 0 }, np = 0, final = 0;
+        for (int i = 0; i < 12; i++) {
             int d = read_byte(40);
             if (d < 0) return KEY_ESC;
-            if (d >= '0' && d <= '9') { param = param * 10 + (d - '0'); continue; }
-            if (d == ';') { param = 0; continue; }     /* drop modifier parameters */
+            if (d >= '0' && d <= '9') { p[np] = p[np] * 10 + (d - '0'); continue; }
+            if (d == ';' || d == ':') { if (np < 2) np++; p[np] = 0; continue; }
             final = d;
             break;
         }
-        int k = csi_key(final, param);
+        int k = csi_key(final, p);
         return k == KEY_NONE ? KEY_ESC : k;
     }
 

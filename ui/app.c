@@ -52,7 +52,7 @@ typedef enum { V_YEAR, V_QUARTER, V_MONTH, V_WEEK, V_DAY } view_t;
 #define STATUS_Y(a) ((a)->H - 1 - (a)->menu_rows)   /* status line / prompts */
 #define BOTTOM(a)   (1 + (a)->menu_rows)
 
-typedef enum { TBL_NONE, TBL_SLOTS, TBL_DAYLOC, TBL_TODOS, TBL_EVENTS, TBL_PLACES, TBL_CONTACTS, TBL_SEARCH } table_t;
+typedef enum { TBL_NONE, TBL_SLOTS, TBL_DAYLOC, TBL_TODOS, TBL_EVENTS, TBL_PLACES, TBL_CONTACTS, TBL_SEARCH, TBL_UPCOMING } table_t;
 #define TBL_LAST TBL_CONTACTS   /* TBL_SEARCH is outside the v cycle */
 
 typedef struct {
@@ -83,6 +83,7 @@ typedef struct {
     int trow, tcol, trow0, tcol0;
     daynum_t tbase;      /* first day shown in the day-based sheets */
     char query[128];     /* search sheet */
+    char tagfil[64];     /* active tag filter; empty = everything */
     table_t table_before_search;
     char msg[256];
     bool msg_err;
@@ -154,7 +155,7 @@ static void palette_init(const config_t *c)
 }
 
 static const char *const view_names[] = { "year", "3 months", "month", "week", "day" };
-static const char *const table_names[] = { "", "days", "locations by date", "todos", "events", "places", "contacts", "search" };
+static const char *const table_names[] = { "", "days", "locations by date", "todos", "events", "places", "contacts", "search", "upcoming" };
 
 /* ---------- utilities ---------- */
 
@@ -223,9 +224,100 @@ static void save(app_t *a)
     if (store_save(a->st) != 0) set_msg(a, true, "save failed: %s (%s)", strerror(errno), a->st->path);
 }
 
+/* ---------- tags ---------- */
+
+/* walk space-separated words; returns false when the string is exhausted */
+static bool next_tag(const char **p, char *w, size_t n)
+{
+    const char *q = *p;
+    while (*q == ' ') q++;
+    if (!*q) return false;
+    size_t i = 0;
+    while (*q && *q != ' ') { if (i + 1 < n) w[i++] = *q; q++; }
+    w[i] = 0;
+    *p = q;
+    return true;
+}
+
+static bool tags_have(const char *tags, const char *tag)
+{
+    if (!tags || !tag || !*tag) return false;
+    const char *q = tags;
+    char w[64];
+    while (next_tag(&q, w, sizeof w)) if (str_ieq(w, tag)) return true;
+    return false;
+}
+
+static bool tag_match(const app_t *a, const item_t *it)
+{
+    return !a->tagfil[0] || tags_have(it->tags, a->tagfil);
+}
+
+/* every tag in use plus the predefined ones from the config, deduplicated, sorted */
+#define MAX_TAGS 128
+static int tag_candidates(app_t *a, const char **out, int max)
+{
+    static char pool[4096];
+    size_t used = 0;
+    int n = 0;
+    const char *srcs[2] = { a->cfg.conf ? a->cfg.conf->tags : "", NULL };
+    for (int pass = 0; pass < 3 && n < max; pass++) {
+        int count = pass == 1 ? a->st->nitems : pass == 2 ? a->cs->n : 1;
+        for (int i = 0; i < count && n < max; i++) {
+            const char *src = pass == 0 ? srcs[0] : pass == 1 ? a->st->items[i].tags : a->cs->c[i].tags;
+            if (!src) continue;
+            char w[64];
+            while (next_tag(&src, w, sizeof w) && n < max) {
+                bool seen = false;
+                for (int j = 0; j < n; j++) if (str_ieq(out[j], w)) seen = true;
+                size_t len = strlen(w) + 1;
+                if (seen || used + len > sizeof pool) continue;
+                memcpy(pool + used, w, len);
+                out[n++] = pool + used;
+                used += len;
+            }
+        }
+    }
+    for (int i = 1; i < n; i++) {
+        const char *v = out[i]; int j = i - 1;
+        while (j >= 0 && strcmp(out[j], v) > 0) { out[j + 1] = out[j]; j--; }
+        out[j + 1] = v;
+    }
+    return n;
+}
+
+/* candidates whose text contains the (possibly empty) partial word */
+static int tag_matches(app_t *a, const char *partial, const char **out, int max)
+{
+    int n = tag_candidates(a, out, max);
+    if (!partial || !*partial) return n;
+    int k = 0;
+    for (int i = 0; i < n; i++) if (utf8_icontains(out[i], partial)) out[k++] = out[i];
+    return k;
+}
+
 static int day_items(app_t *a, daynum_t day, int *idx)
 {
-    return store_day_items(a->st, day, idx, MAX_DAY_ITEMS);
+    int n = store_day_items(a->st, day, idx, MAX_DAY_ITEMS);
+    if (!a->tagfil[0]) return n;
+    int k = 0;
+    for (int i = 0; i < n; i++) if (tag_match(a, &a->st->items[idx[i]])) idx[k++] = idx[i];
+    return k;
+}
+
+/* store_day_load, but honouring the tag filter */
+static int day_load(app_t *a, daynum_t day, int *pending)
+{
+    if (!a->tagfil[0]) return store_day_load(a->st, day, pending);
+    int idx[MAX_DAY_ITEMS];
+    int n = day_items(a, day, idx), load = 0, p = 0;
+    for (int i = 0; i < n; i++) {
+        const item_t *it = &a->st->items[idx[i]];
+        if (it->kind == ITEM_TODO) { if (!todo_done_on(it, day)) p++; }
+        else load++;
+    }
+    if (pending) *pending = p;
+    return load + p;
 }
 
 static int selected(app_t *a)
@@ -355,9 +447,11 @@ static void draw_title(app_t *a)
         }
     }
     snprintf(left, sizeof left, " soon  %s%s", clock, there);
-    if (a->table == TBL_SLOTS || a->table == TBL_DAYLOC || a->table == TBL_SEARCH) snprintf(right, sizeof right, "[%s] ", table_names[a->table]);
-    else if (a->table != TBL_NONE) { int nrow; int *rows = table_rows(a, &nrow); free(rows); snprintf(right, sizeof right, "[sheet: %s  %d/%d] ", table_names[a->table], nrow ? a->trow + 1 : 0, nrow); }
-    else snprintf(right, sizeof right, "[%s]  %d items ", view_names[a->view], a->st->nitems);
+    char fil[72] = "";
+    if (a->tagfil[0]) snprintf(fil, sizeof fil, "#%s  ", a->tagfil);
+    if (a->table == TBL_SLOTS || a->table == TBL_DAYLOC || a->table == TBL_SEARCH || a->table == TBL_UPCOMING) snprintf(right, sizeof right, "%s[%s] ", fil, table_names[a->table]);
+    else if (a->table != TBL_NONE) { int nrow; int *rows = table_rows(a, &nrow); free(rows); snprintf(right, sizeof right, "%s[sheet: %s  %d/%d] ", fil, table_names[a->table], nrow ? a->trow + 1 : 0, nrow); }
+    else snprintf(right, sizeof right, "%s[%s]  %d items ", fil, view_names[a->view], a->st->nitems);
     grid_fill(&a->g, 0, 0, a->W, 1, ' ', S_TITLEBAR);
     int rw = utf8_swidth(right);
     grid_puts(&a->g, 0, 0, left, a->W - rw - 1 > 0 ? a->W - rw - 1 : a->W, S_TITLEBAR);
@@ -434,8 +528,8 @@ static void draw_status(app_t *a)
         grid_puts(&a->g, 0, y, line, a->W, S_NORMAL);
         return;
     }
-    if (a->table == TBL_SEARCH) {
-        grid_puts(&a->g, 0, y, "j/k move  Enter goes to the item (or contact)  e edits  x done  / searches again  Esc back", a->W, S_DIM);
+    if (a->table == TBL_SEARCH || a->table == TBL_UPCOMING) {
+        grid_puts(&a->g, 0, y, "j/k move  Enter goes to the item (or contact)  e edits  x done  # filter  / search  Esc back", a->W, S_DIM);
         return;
     }
     if (a->table == TBL_SLOTS) {
@@ -478,19 +572,19 @@ static void draw_menu(app_t *a, menu_t which)
 {
     if (a->menu_rows < 2) return;
     static const menu_item_t main1[] = { {".","Today"}, {"[ ]","Week"}, {"{ }","Month"}, {"( )","Year"}, {"n p","Period"}, {"+ -","Zoom"}, {"g","Go to"}, {"Tab","Items"}, {"s","Sun"}, {"z","Slot"} };
-    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"/","Search"}, {"C","Contacts"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
+    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"/","Search"}, {"C","Contacts"}, {"A","Upcoming"}, {"#","Filter"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t items1[] = { {"j k","Item"}, {"h l","Day"}, {"Enter","Edit"}, {"x","Done"}, {"m","Move"}, {"d","Delete"}, {"Esc","Leave"} };
     static const menu_item_t items2[] = { {"a","Event"}, {"T","Todo"}, {".","Today"}, {"s","Sun"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
-    static const menu_item_t form1[] = { {"Tab","Next field"}, {"S-Tab","Previous"}, {"Enter","Save"}, {"Esc","Cancel"} };
-    static const menu_item_t form2[] = { {"Arrows","Adjust / calendar"}, {"t","Today"}, {"n","Now"}, {"-","None"}, {"^U","Clear text"} };
+    static const menu_item_t form1[] = { {"Enter/Tab","Next field"}, {"S-Tab","Previous"}, {"^Enter ^S","Save"}, {"Esc","Cancel"} };
+    static const menu_item_t form2[] = { {"Arrows","Fields / adjust"}, {"t .","Today"}, {"n","Now"}, {"-","None"}, {"^U","Clear text"} };
     static const menu_item_t pick1[] = { {"Arrows","Move"}, {"n p","Month"}, {"N P","Year"}, {"t","Today"}, {"g","Type a date"} };
     static const menu_item_t pick2[] = { {"Enter","Pick"}, {"Esc","Cancel"} };
     static const menu_item_t prompt1[] = { {"Enter","OK"}, {"Esc","Cancel"}, {"^U","Clear"}, {"^W","Delete word"} };
     static const menu_item_t confirm1[] = { {"y","Yes"}, {"n","No"} };
     static const menu_item_t table1[] = { {"Arrows","Cell"}, {"Enter","Edit cell"}, {"e","Edit row"}, {"a","Add"}, {"d","Delete"}, {"x","Done"}, {"PgUp/Dn","Page"} };
-    static const menu_item_t table2[] = { {"v","Next sheet"}, {"V","Previous"}, {"C","Contacts"}, {"Esc","Calendar"}, {"?","Help"}, {"q","Quit"} };
+    static const menu_item_t table2[] = { {"v","Next sheet"}, {"V","Previous"}, {"C","Contacts"}, {"A","Upcoming"}, {"#","Filter"}, {"Esc","Calendar"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t slots1[] = { {"Arrows","Cell"}, {"Enter","Edit / new event"}, {"T","Todo"}, {"d","Delete"}, {"x","Done"}, {"z","Slot size"}, {"[ ]","Week"} };
-    static const menu_item_t search1[] = { {"j k","Hit"}, {"Enter","Go there"}, {"e","Edit"}, {"x","Done"}, {"/","New search"}, {"Esc","Back"} };
+    static const menu_item_t search1[] = { {"j k","Row"}, {"Enter","Go there"}, {"e","Edit"}, {"x","Done"}, {"#","Filter"}, {"/","Search"}, {"Esc","Back"} };
     static const menu_item_t dayloc1[] = { {"Arrows","Day"}, {"Enter","Set place"}, {"f","Fill down"}, {"L","Range"}, {"d","Home"}, {"[ ]","Week"}, {"{ }","Month"} };
     static const menu_item_t none[] = { {"",""} };
 #define N(m) ((int)(sizeof (m) / sizeof (m)[0]))
@@ -552,7 +646,7 @@ static void draw_month_box(app_t *a, int x, int y, int yr, int mo, daynum_t curs
             if (dn < 1 || dn > nd) continue;
             daynum_t d = first + dn - 1;
             int pend = 0;
-            int load = store_day_load(a->st, d, &pend);
+            int load = day_load(a, d, &pend);
             char num[16];
             snprintf(num, sizeof num, "%2d", dn);
             style_t st = day_style(a, d, cursor, load);
@@ -627,7 +721,7 @@ static void draw_month_big(app_t *a, int cal_h)
             daynum_t d = first + dn - 1;
             int x = 3 + col * cw;
             int pend = 0;
-            int load = store_day_load(a->st, d, &pend);
+            int load = day_load(a, d, &pend);
             char num[16];
             snprintf(num, sizeof num, "%2d", dn);
             style_t st = day_style(a, d, a->cur, load);
@@ -786,7 +880,7 @@ static void draw_details(app_t *a, const item_t *it, int x, int y, int w, int h)
 #define OPEN_NONE (-2)
 static daynum_t open_todo_day(const app_t *a, const item_t *it)
 {
-    if (it->kind != ITEM_TODO) return OPEN_NONE;
+    if (it->kind != ITEM_TODO || !tag_match(a, it)) return OPEN_NONE;
     if (item_is_repeating(it)) {
         daynum_t d = todo_last_open_before(it, a->today);
         return d >= 0 ? d : OPEN_NONE;
@@ -1101,8 +1195,10 @@ static void draw_help(app_t *a)
         "n p  PgDn PgUp     next / previous period of the current view",
         "g                  go to a date: 14.9.  sep 14  +3w  fri  next mon  w38  eom",
         "Tab                into the day's items: j/k move, Enter edits, Esc leaves",
-        "a  T               new event / new todo: a form where arrows move on a",
-        "                   calendar for dates and a strip of slots for times",
+        "a  T               new event / new todo. In forms: Enter confirms a field and",
+        "                   moves on (the last field saves), Ctrl-Enter or Ctrl-S save from",
+        "                   anywhere, up/down move between fields, t or . is today, and the",
+        "                   Tags pane lists known tags: up/down pick, right arrow adds",
         "e x m d            edit / done / move / delete the selected item",
         "s                  sun and twilight panel for the day's location",
         "L  H               location for a range of days (from/until) / home",
@@ -1112,6 +1208,8 @@ static void draw_help(app_t *a)
         "                   events, places, contacts; arrows move, Enter edits/creates",
         "C                  the contacts sheet directly (a adds, Enter edits a cell, e the row)",
         "/                  search items and contacts (Enter jumps to the hit)",
+        "#                  show one tag only (medical, financial, ...) in every view",
+        "A                  upcoming: open todos, then the year ahead, one long list",
         "M                  show / hide the key menu at the bottom",
         "?  Esc             this help / close panel or deselect",
     };
@@ -1131,20 +1229,22 @@ static void draw_table(app_t *a);
 static void draw_slots_sheet(app_t *a);
 static void draw_dayloc_sheet(app_t *a);
 static void draw_search_sheet(app_t *a);
+static void tag_filter_form(app_t *a);
+static void open_upcoming(app_t *a);
 
 static void draw_all(app_t *a)
 {
     grid_clear(&a->g, S_NORMAL);
     if (a->table != TBL_NONE) {
         if (a->table == TBL_SLOTS) draw_slots_sheet(a);
-        else if (a->table == TBL_SEARCH) draw_search_sheet(a);
+        else if (a->table == TBL_SEARCH || a->table == TBL_UPCOMING) draw_search_sheet(a);
         else if (a->table == TBL_DAYLOC) draw_dayloc_sheet(a);
         else draw_table(a);
         if (a->show_help) draw_help(a);
         draw_title(a);
         draw_infobar(a);
         draw_status(a);
-        draw_menu(a, a->table == TBL_SLOTS ? MENU_SLOTS : a->table == TBL_DAYLOC ? MENU_DAYLOC : a->table == TBL_SEARCH ? MENU_SEARCH : MENU_TABLE);
+        draw_menu(a, a->table == TBL_SLOTS ? MENU_SLOTS : a->table == TBL_DAYLOC ? MENU_DAYLOC : a->table == TBL_SEARCH || a->table == TBL_UPCOMING ? MENU_SEARCH : MENU_TABLE);
         return;
     }
     int cal_h, ag_h;
@@ -1331,7 +1431,7 @@ static const char *resolve_place(app_t *a, const char *text)
  * slots for times, a list of presets for durations, completions for places.
  */
 
-typedef enum { F_TEXT, F_DATE, F_TIME, F_DUR, F_TOGGLE, F_PRI, F_CHOICE } ftype_t;
+typedef enum { F_TEXT, F_DATE, F_TIME, F_DUR, F_TOGGLE, F_PRI, F_CHOICE, F_TAGS } ftype_t;
 
 typedef struct {
     const char *label;
@@ -1397,6 +1497,7 @@ static void field_value(app_t *a, const field_t *f, char *out, size_t n)
     case F_TOGGLE: snprintf(out, n, "%s", f->val ? "yes" : "no"); break;
     case F_PRI: if (f->val) snprintf(out, n, "%d", f->val); else snprintf(out, n, "%s", none); break;
     case F_CHOICE: snprintf(out, n, "%s", f->text); break;
+    case F_TAGS: snprintf(out, n, "%s", f->text); break;
     }
 }
 
@@ -1404,15 +1505,44 @@ static const char *field_hint(const field_t *f)
 {
     switch (f->type) {
     case F_TEXT:   return f->complete ? "type a place; the list completes it" : "type the text · Ctrl-U clears";
-    case F_DATE:   return f->optional ? "arrows move on the calendar · n/p month · t today · - none"
-                                      : "arrows move on the calendar · n/p month · t today";
+    case F_DATE:   return f->optional ? "arrows move on the calendar · n/p month · t/. today · - none"
+                                      : "arrows move on the calendar · n/p month · t/. today";
     case F_TIME:   return "up/down by slot · left/right by hour · n now";
     case F_DUR:    return "up/down presets · left/right by hour · or type 1h30";
     case F_TOGGLE: return "Space toggles";
     case F_PRI:    return "left/right or 1-5 · 0 none";
     case F_CHOICE: return f->contacts ? "up/down pick a contact · type to narrow · Ctrl-U none" : f->optional ? "up/down pick a place · type to narrow · Ctrl-U none" : "up/down pick a place · type to narrow · or Name | lat lon | Zone";
+    case F_TAGS:   return "type tags · up/down pick · \xE2\x86\x92 adds/removes it · Ctrl-W last";
     }
     return "";
+}
+
+static const char *tags_partial(const field_t *f)
+{
+    const char *sp = strrchr(f->text, ' ');
+    return sp ? sp + 1 : f->text;
+}
+
+/* add the tag to the field (replacing any partial word being typed), or remove it if present */
+static void tags_toggle(app_t *a, field_t *f, const char *tag)
+{
+    (void)a;
+    if (tags_have(f->text, tag)) {
+        char out[sizeof f->text] = "";
+        const char *q = f->text;
+        char w[64];
+        size_t len = 0;
+        while (next_tag(&q, w, sizeof w)) {
+            if (str_ieq(w, tag)) continue;
+            len += (size_t)snprintf(out + len, sizeof out - len, "%s%s", len ? " " : "", w);
+        }
+        snprintf(f->text, sizeof f->text, "%s", out);
+        return;
+    }
+    size_t keep = (size_t)(tags_partial(f) - f->text);
+    f->text[keep] = 0;
+    size_t len = strlen(f->text);
+    snprintf(f->text + len, sizeof f->text - len, "%s ", tag);
 }
 
 /* completion candidates for a place field: store places first, then the city table */
@@ -1546,6 +1676,25 @@ static void draw_pane(app_t *a, form_t *fm, int x, int y, int w, int h)
         if (n > rows) { char c[32]; snprintf(c, sizeof c, "%d/%d", f->choice + 1, n); grid_puts(&a->g, x + w - (int)strlen(c) - 1, y + rows - 1, c, (int)strlen(c), S_DIM); }
         break;
     }
+    case F_TAGS: {
+        static const char *m[MAX_TAGS];
+        int n = tag_matches(a, tags_partial(f), m, MAX_TAGS);
+        if (n == 0) { grid_puts(&a->g, x + 2, y, "no known tags match;", w - 2, S_DIM); grid_puts(&a->g, x + 2, y + 1, "the words typed become tags", w - 2, S_DIM); break; }
+        if (f->choice >= n) f->choice = n - 1;
+        int first = f->choice - h / 2;
+        if (first > n - h) first = n - h;
+        if (first < 0) first = 0;
+        for (int i = 0; i < h && first + i < n; i++) {
+            bool cur = first + i == f->choice;
+            bool in = tags_have(f->text, m[first + i]);
+            char row[80];
+            snprintf(row, sizeof row, "%s %s", in ? (a->cfg.unicode ? "\xE2\x98\x91" : "[x]") : (a->cfg.unicode ? "\xE2\x98\x90" : "[ ]"), m[first + i]);
+            grid_field(&a->g, x + 2, y + i, row, w - 3, cur ? S_FOCUS : in ? S_BOLD : S_NORMAL, a->cfg.unicode);
+            if (cur) grid_put(&a->g, x, y + i, a->cfg.unicode ? 0x25B6 : '>', S_NOW);
+        }
+        if (n > h) { char c[32]; snprintf(c, sizeof c, "%d/%d", f->choice + 1, n); grid_puts(&a->g, x + w - (int)strlen(c) - 1, y + h - 1, c, (int)strlen(c), S_DIM); }
+        break;
+    }
     case F_TOGGLE:
         break;
     }
@@ -1644,8 +1793,14 @@ static void complete_field(app_t *a, field_t *f)
         static const char *m[256];
         int n = choice_matches(a, f, m, 256);
         if (!f->text[0] && !f->val && f->optional) return;          /* untouched optional choice stays empty */
+        if (f->list && f->optional && !f->text[0]) return;          /* an emptied list choice means none */
         if (f->list && !f->val && f->text[0]) { for (int i = 0; i < n; i++) if (!strcmp(m[i], f->text)) return; }   /* preset already exact */
         if (n > 0 && f->choice >= 0 && f->choice < n && !strchr(f->text, '|')) snprintf(f->text, sizeof f->text, "%s", m[f->choice]);
+        return;
+    }
+    if (f->type == F_TAGS) {
+        size_t len = strlen(f->text);
+        while (len && f->text[len - 1] == ' ') f->text[--len] = 0;
         return;
     }
     if (f->type != F_TEXT || !f->complete || !f->text[0]) return;
@@ -1653,9 +1808,10 @@ static void complete_field(app_t *a, field_t *f)
     if (place_matches(a, f->text, m, 1) == 1) snprintf(f->text, sizeof f->text, "%s", m[0]);
 }
 
-static bool is_adjust_field(const field_t *f)
+/* fields whose editing consumes the vertical arrows; on the rest, up/down move between fields */
+static bool field_uses_updown(const field_t *f)
 {
-    return f->type == F_TIME || f->type == F_DUR || f->type == F_DATE || f->type == F_PRI || f->type == F_CHOICE;
+    return f->type == F_TIME || f->type == F_DUR || f->type == F_DATE || f->type == F_CHOICE || f->type == F_TAGS;
 }
 
 static void form_focus_move(app_t *a, form_t *fm, int dir)
@@ -1678,8 +1834,8 @@ static int dur_preset_index(int v)
 static void form_key(app_t *a, form_t *fm, int k)
 {
     field_t *f = &fm->f[fm->focus];
-    if (k == KEY_TAB || (!is_adjust_field(f) && k == KEY_DOWN)) { form_focus_move(a, fm, +1); return; }
-    if (k == KEY_BTAB || (!is_adjust_field(f) && k == KEY_UP)) { form_focus_move(a, fm, -1); return; }
+    if (k == KEY_TAB || (!field_uses_updown(f) && k == KEY_DOWN)) { form_focus_move(a, fm, +1); return; }
+    if (k == KEY_BTAB || (!field_uses_updown(f) && k == KEY_UP)) { form_focus_move(a, fm, -1); return; }
 
     switch (f->type) {
     case F_TEXT:
@@ -1693,6 +1849,17 @@ static void form_key(app_t *a, form_t *fm, int k)
         if (k == KEY_PGDN) { f->choice = f->choice + PANE_H < n ? f->choice + PANE_H : (n ? n - 1 : 0); return; }
         if (k == KEY_PGUP) { f->choice = f->choice - PANE_H > 0 ? f->choice - PANE_H : 0; return; }
         if (k == KEY_CTRL('u')) f->val = 1;                 /* an explicit clear counts as touched */
+        if (edit_text_key(f->text, sizeof f->text, k)) f->choice = 0;
+        return;
+    }
+    case F_TAGS: {
+        static const char *m[MAX_TAGS];
+        int n = tag_matches(a, tags_partial(f), m, MAX_TAGS);
+        if (f->choice >= n) f->choice = n ? n - 1 : 0;
+        if (k == KEY_DOWN || k == KEY_PGDN) { if (f->choice + 1 < n) f->choice++; return; }
+        if (k == KEY_UP || k == KEY_PGUP) { if (f->choice > 0) f->choice--; return; }
+        if (k == KEY_RIGHT) { if (n > 0) { tags_toggle(a, f, m[f->choice]); f->choice = 0; } return; }
+        if (k == KEY_LEFT) return;
         if (edit_text_key(f->text, sizeof f->text, k)) f->choice = 0;
         return;
     }
@@ -1710,7 +1877,7 @@ static void form_key(app_t *a, form_t *fm, int k)
         case KEY_PGDN: case 'n':  f->day = civil_add_months(d, 1); break;
         case 'P': f->day = civil_add_years(d, -1); break;
         case 'N': f->day = civil_add_years(d, 1); break;
-        case 't': f->day = a->today; break;
+        case 't': case '.': f->day = a->today; break;
         case ' ': if (f->day < 0) f->day = d; break;
         case '-': if (f->optional) f->day = -1; break;
         case 'g': { daynum_t g; if (prompt_date(a, "go to: ", &g)) f->day = g; break; }
@@ -1762,8 +1929,8 @@ static void form_key(app_t *a, form_t *fm, int k)
         return;
     case F_PRI:
         if (k >= '0' && k <= '5') f->val = k - '0';
-        else if (k == KEY_RIGHT || k == 'l' || k == KEY_DOWN || k == 'j') { if (f->val < 5) f->val++; }
-        else if (k == KEY_LEFT || k == 'h' || k == KEY_UP || k == 'k') { if (f->val > 0) f->val--; }
+        else if (k == KEY_RIGHT || k == 'l') { if (f->val < 5) f->val++; }
+        else if (k == KEY_LEFT || k == 'h') { if (f->val > 0) f->val--; }
         return;
     }
 }
@@ -1782,8 +1949,13 @@ static bool run_form(app_t *a, form_t *fm)
         if (k == KEY_RESIZE) { resize(a); continue; }
         if (k == KEY_EOF) { a->quit = true; return false; }
         if (k == KEY_ESC) return false;
-        if (k == KEY_ENTER) {
+        if (k == KEY_ENTER || k == KEY_CTRL_ENTER || k == KEY_CTRL('s')) {
             complete_field(a, &fm->f[fm->focus]);
+            if (k == KEY_ENTER) {                        /* confirm the field, move on; the last field saves */
+                int last = 0;
+                for (int i = 0; i < fm->n; i++) if (fm->f[i].enabled) last = i;
+                if (fm->focus != last) { form_focus_move(a, fm, +1); continue; }
+            }
             if (fm->require_title && fm->f[0].type == F_TEXT && !fm->f[0].text[0]) { fm->focus = 0; set_msg(a, true, "a title is needed"); continue; }
             return true;
         }
@@ -1886,7 +2058,7 @@ static bool event_form(app_t *a, item_t *it, bool is_new, bool allday_default)
     field_t *until = form_add(&fm, "Until", F_DATE);
     field_t *at = form_add(&fm, "Place", F_CHOICE);
     field_t *who = form_add(&fm, "Who", F_CHOICE);
-    field_t *tags = form_add(&fm, "Tags", F_TEXT);
+    field_t *tags = form_add(&fm, "Tags", F_TAGS);
     field_t *rep, *runtil;
     add_repeat_fields(&fm, it, &rep, &runtil);
     until->optional = true;
@@ -1930,7 +2102,7 @@ static bool todo_form(app_t *a, item_t *it, bool is_new)
     field_t *due = form_add(&fm, "Due", F_DATE);
     field_t *pri = form_add(&fm, "Priority", F_PRI);
     field_t *who = form_add(&fm, "Who", F_CHOICE);
-    field_t *tags = form_add(&fm, "Tags", F_TEXT);
+    field_t *tags = form_add(&fm, "Tags", F_TAGS);
     field_t *rep, *runtil;
     add_repeat_fields(&fm, it, &rep, &runtil);
     date->optional = true;
@@ -2150,7 +2322,7 @@ static bool contact_form(app_t *a, contact_t *c, bool is_new)
     field_t *phone = form_add(&fm, "Phone", F_TEXT);
     field_t *email = form_add(&fm, "Email", F_TEXT);
     field_t *place = form_add(&fm, "Place", F_CHOICE);
-    field_t *tags = form_add(&fm, "Tags", F_TEXT);
+    field_t *tags = form_add(&fm, "Tags", F_TAGS);
     field_t *note = form_add(&fm, "Note", F_TEXT);
     place->optional = true;
     snprintf(name->text, sizeof name->text, "%s", c->name ? c->name : "");
@@ -2207,7 +2379,7 @@ static int *table_rows(app_t *a, int *n)
     case TBL_TODOS:
     case TBL_EVENTS: {
         item_kind_t kind = a->table == TBL_TODOS ? ITEM_TODO : ITEM_EVENT;
-        for (int i = 0; i < a->st->nitems; i++) if (a->st->items[i].kind == kind) rows[k++] = i;
+        for (int i = 0; i < a->st->nitems; i++) if (a->st->items[i].kind == kind && tag_match(a, &a->st->items[i])) rows[k++] = i;
         /* insertion sort: todos by done, then scheduled/due; events by date and time */
         for (int i = 1; i < k; i++) {
             int v = rows[i], j = i - 1;
@@ -2812,6 +2984,8 @@ static bool slots_sheet_key(app_t *a, int k)
     case 'v': set_table(a, a->table == TBL_LAST ? TBL_SLOTS : a->table + 1); return true;
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
+    case '#': tag_filter_form(a); return true;
+    case 'A': open_upcoming(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
@@ -2839,7 +3013,7 @@ static void dayloc_cell(app_t *a, daynum_t day, int col, char *out, size_t n)
     case 4: if (p) { if (sun.rise_set == SUN_NORMAL) { sun_local_hhmm(sun.rise, off, &hh, &mm, &dd); snprintf(out, n, "%02d:%02d", hh, mm); } else snprintf(out, n, sun.rise_set == SUN_ALWAYS_ABOVE ? "up" : "down"); } break;
     case 5: if (p) { if (sun.rise_set == SUN_NORMAL) { sun_local_hhmm(sun.set, off, &hh, &mm, &dd); snprintf(out, n, "%02d:%02d", hh, mm); } else out[0] = 0; } break;
     case 6: if (p) snprintf(out, n, "%dh%02d", (int)(sun.day_length / 60), (int)sun.day_length % 60); break;
-    case 7: { int pend; int l = store_day_load(a->st, day, &pend); if (l) snprintf(out, n, "%d", l); break; }
+    case 7: { int pend; int l = day_load(a, day, &pend); if (l) snprintf(out, n, "%d", l); break; }
     }
 }
 
@@ -2937,10 +3111,47 @@ static bool dayloc_key(app_t *a, int k)
     case 'v': set_table(a, a->table == TBL_LAST ? TBL_SLOTS : a->table + 1); return true;
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
+    case '#': tag_filter_form(a); return true;
+    case 'A': open_upcoming(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
     }
+}
+
+/* ---------- tag filter and the upcoming view ---------- */
+
+static void tag_filter_form(app_t *a)
+{
+    static const char *tags[MAX_TAGS];
+    int n = tag_candidates(a, tags, MAX_TAGS);
+    if (n == 0 && !a->tagfil[0]) { set_msg(a, true, "no tags anywhere yet; add some in the item forms or a tags: line in the config"); return; }
+    form_t fm;
+    memset(&fm, 0, sizeof fm);
+    fm.title = "Filter by tag";
+    field_t *f = form_add(&fm, "Tag", F_CHOICE);
+    f->optional = true;
+    f->list = tags;
+    f->nlist = n;
+    snprintf(f->text, sizeof f->text, "%s", a->tagfil);
+    if (f->text[0]) f->val = 1;
+    if (!run_form(a, &fm)) return;
+    char w[64] = "";
+    const char *q = f->text;
+    next_tag(&q, w, sizeof w);                 /* the first word only */
+    snprintf(a->tagfil, sizeof a->tagfil, "%s", w);
+    a->sel = -1;
+    if (a->tagfil[0]) set_msg(a, false, "showing only #%s  (# again, then Ctrl-U, clears it)", a->tagfil);
+    else set_msg(a, false, "filter cleared");
+}
+
+static void open_upcoming(app_t *a)
+{
+    if (a->table != TBL_SEARCH && a->table != TBL_UPCOMING) a->table_before_search = a->table;
+    a->table = TBL_UPCOMING;
+    a->itemmode = false;
+    a->sel = -1;
+    a->trow = a->trow0 = 0;
 }
 
 /* ---------- search ---------- */
@@ -2976,10 +3187,44 @@ static int search_hits(app_t *a, hit_t *out, int max)
 
 #define MAX_HITS 512
 
+/* the long view: open todos first (deadline order, undated last), then every
+ * occurrence from today onward, all honouring the tag filter */
+static int upcoming_hits(app_t *a, hit_t *out, int max)
+{
+    int n = 0;
+    for (int i = 0; i < a->st->nitems && n < max; i++) {
+        const item_t *it = &a->st->items[i];
+        daynum_t od = open_todo_day(a, it);
+        if (od == OPEN_NONE || (item_is_repeating(it) && od < 0)) continue;
+        out[n].kind = 0; out[n].ref = i; out[n].day = od; n++;
+    }
+    for (int i = 1; i < n; i++) {              /* deadline order, undated last */
+        hit_t v = out[i]; int j = i - 1;
+        long kv = v.day >= 0 ? v.day : (1L << 40);
+        while (j >= 0 && (out[j].day >= 0 ? out[j].day : (1L << 40)) > kv) { out[j + 1] = out[j]; j--; }
+        out[j + 1] = v;
+    }
+    for (daynum_t d = a->today; d <= a->today + 366 && n < max; d++) {
+        int di[MAX_DAY_ITEMS];
+        int dn = day_items(a, d, di);
+        for (int k = 0; k < dn && n < max; k++) {
+            const item_t *it = &a->st->items[di[k]];
+            if (it->kind == ITEM_TODO) {
+                if (todo_done_on(it, d)) continue;
+                daynum_t od = open_todo_day(a, it);
+                if (od != OPEN_NONE && (!item_is_repeating(it) || od == d)) continue;
+            }
+            if (it->kind == ITEM_EVENT && !item_occurs_on(it, d)) continue;
+            out[n].kind = 0; out[n].ref = di[k]; out[n].day = d; n++;
+        }
+    }
+    return n;
+}
+
 static void draw_search_sheet(app_t *a)
 {
     static hit_t hits[MAX_HITS];
-    int n = search_hits(a, hits, MAX_HITS);
+    int n = a->table == TBL_UPCOMING ? upcoming_hits(a, hits, MAX_HITS) : search_hits(a, hits, MAX_HITS);
     int y0 = TOP, body = STATUS_Y(a) - y0 - 1;
     if (body < 1) body = 1;
     if (a->trow >= n) a->trow = n - 1;
@@ -2988,7 +3233,10 @@ static void draw_search_sheet(app_t *a)
     if (a->trow >= a->trow0 + body) a->trow0 = a->trow - body + 1;
     if (a->trow0 < 0) a->trow0 = 0;
     char head[256];
-    snprintf(head, sizeof head, " search: %s   %d hit%s", a->query, n, n == 1 ? "" : "s");
+    if (a->table == TBL_UPCOMING)
+        snprintf(head, sizeof head, " upcoming%s%s \xC2\xB7 open todos, then the year ahead   %d item%s", a->tagfil[0] ? "  #" : "", a->tagfil[0] ? a->tagfil : "", n, n == 1 ? "" : "s");
+    else
+        snprintf(head, sizeof head, " search: %s   %d hit%s", a->query, n, n == 1 ? "" : "s");
     grid_fill(&a->g, 0, y0, a->W, 1, ' ', S_BOLD);
     grid_puts(&a->g, 0, y0, head, a->W, S_BOLD);
     for (int r = 0; r < body; r++) {
@@ -3026,7 +3274,7 @@ static void start_search(app_t *a)
     snprintf(buf, sizeof buf, "%s", a->query);
     if (!prompt(a, "search: ", buf, sizeof buf) || !buf[0]) return;
     snprintf(a->query, sizeof a->query, "%s", buf);
-    if (a->table != TBL_SEARCH) a->table_before_search = a->table;
+    if (a->table != TBL_SEARCH && a->table != TBL_UPCOMING) a->table_before_search = a->table;
     a->table = TBL_SEARCH;
     a->itemmode = false;
     a->sel = -1;
@@ -3036,7 +3284,7 @@ static void start_search(app_t *a)
 static bool search_key(app_t *a, int k)
 {
     static hit_t hits[MAX_HITS];
-    int n = search_hits(a, hits, MAX_HITS);
+    int n = a->table == TBL_UPCOMING ? upcoming_hits(a, hits, MAX_HITS) : search_hits(a, hits, MAX_HITS);
     int body = STATUS_Y(a) - TOP - 1;
     if (body < 1) body = 1;
     switch (k) {
@@ -3072,9 +3320,11 @@ static bool search_key(app_t *a, int k)
             a->st->dirty = true; save(a);
         }
         return true;
-    case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = a->table_before_search == TBL_SEARCH ? TBL_NONE : a->table_before_search; return true;
+    case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = a->table_before_search == TBL_SEARCH || a->table_before_search == TBL_UPCOMING ? TBL_NONE : a->table_before_search; return true;
     case 'v': set_table(a, TBL_SLOTS); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
+    case '#': tag_filter_form(a); return true;
+    case 'A': open_upcoming(a); return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
     }
@@ -3083,7 +3333,7 @@ static bool search_key(app_t *a, int k)
 /* returns true when the key was consumed by the table view */
 static bool table_key(app_t *a, int k)
 {
-    if (a->table == TBL_SEARCH) return search_key(a, k);
+    if (a->table == TBL_SEARCH || a->table == TBL_UPCOMING) return search_key(a, k);
     if (a->table == TBL_SLOTS) return slots_sheet_key(a, k);
     if (a->table == TBL_DAYLOC) return dayloc_key(a, k);
     int ncol, nrow;
@@ -3111,6 +3361,8 @@ static bool table_key(app_t *a, int k)
     case 'v': set_table(a, a->table == TBL_LAST ? TBL_SLOTS : a->table + 1); return true;
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
+    case '#': tag_filter_form(a); return true;
+    case 'A': open_upcoming(a); return true;
     case '/': start_search(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;   /* global keys */
@@ -3202,6 +3454,8 @@ static void handle_key(app_t *a, int k)
     case 'M': a->menu_rows = a->menu_rows ? 0 : 2; return;
     case 'v': set_table(a, TBL_SLOTS); return;
     case 'C': set_table(a, TBL_CONTACTS); return;
+    case '#': tag_filter_form(a); return;
+    case 'A': open_upcoming(a); return;
     case '/': start_search(a); return;
     case 'g': {
         daynum_t d;

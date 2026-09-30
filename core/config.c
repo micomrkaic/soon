@@ -119,6 +119,8 @@ int config_parse(config_t *c, const char *text, char *err, int errlen)
             n = atoi(v);
             ok = n == 5 || n == 10 || n == 15 || n == 30 || n == 60;
             if (ok) { if (key[1] == 'l') c->slot = n; else c->sheet_slot = n; }
+        } else if (!strcmp(key, "tags")) {
+            snprintf(c->tags, sizeof c->tags, "%s", v);
         } else if (!strcmp(key, "due_soon")) {
             n = atoi(v);
             ok = n >= 0 && n <= 365 && (*v == '0' || n > 0);
@@ -163,6 +165,8 @@ const char *config_template(void)
         "first_weekday: monday\n"
         "# a todo whose due date falls within this many days is shown as due soon (0 = today only)\n"
         "due_soon: 3\n"
+        "# predefined tags, offered in the Tags pane and the # filter alongside tags already in use\n"
+        "#tags: medical financial family work\n"
         "# key menu at the bottom: on | off\n"
         "menu: on\n"
         "# box and marker glyphs: auto | on | off\n"

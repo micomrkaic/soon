@@ -35,6 +35,7 @@ enum {
     KEY_HOME, KEY_END, KEY_PGUP, KEY_PGDN,
     KEY_INS, KEY_DEL, KEY_BTAB,
     KEY_F1, KEY_F2, KEY_F3, KEY_F4, KEY_F5,
+    KEY_CTRL_ENTER,      /* needs modifyOtherKeys or the kitty protocol; plain terminals cannot send it */
 };
 
 #define KEY_CTRL(c) ((c) & 0x1f)
