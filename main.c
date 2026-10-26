@@ -30,6 +30,7 @@
 #include "core/config.h"
 #include "core/contacts.h"
 #include "core/datejump.h"
+#include "core/quick.h"
 #include "core/model.h"
 #include "core/tz.h"
 #include "ui/app.h"
@@ -187,7 +188,9 @@ static void usage(void)
         "\n"
         "  soon export org|ics|vcf [FILE]   write org-mode, iCalendar or vCard (default stdout)\n"
         "  soon import org|ics|vcf FILE     merge from a file (- for stdin); nothing is deleted\n"
-        "  soon config                      print a commented default config file\n");
+        "  soon config                      print a commented default config file\n"
+        "  soon quick TEXT... | FILE | -    add items from a line, a file, or stdin\n"
+        "                                   (soon quick Dentist thu 14:30 #medical)\n");
 }
 
 /* plain-text summary for pipes and shell prompts */
@@ -241,6 +244,62 @@ static void print_soon(store_t *st, daynum_t from, daynum_t today, int days)
         if (!header) { printf("open todos\n"); header = true; }
         printf("  [ ] %s%s\n", it->title ? it->title : "", overdue ? "  (overdue)" : "");
     }
+}
+
+/* soon quick "Pay HOA due:eom #financial"   one line from the arguments
+ * soon quick FILE | -                       one item per line from a file or stdin */
+static int quick_cli(store_t *st, daynum_t today, int argc, char **argv)
+{
+    if (argc == 0) {
+        fprintf(stderr, "usage: soon quick TEXT... | FILE | -\n%s", quick_cheatsheet());
+        return 2;
+    }
+    FILE *f = NULL;
+    char line[1024] = "";
+    if (argc == 1 && !strcmp(argv[0], "-")) f = stdin;
+    else if (argc == 1 && strchr(argv[0], ' ') == NULL) {
+        f = fopen(argv[0], "r");                     /* a file if one exists, else a one-word item */
+    }
+    int added = 0, failed = 0;
+    if (f) {
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\n")] = 0;
+            char *q = line;
+            while (*q == ' ' || *q == '\t') q++;
+            if (!*q || (q[0] == '#' && (q[1] == ' ' || !q[1]))) continue;
+            item_t it;
+            char msg[160], desc[600];
+            if (quick_parse(q, today, &it, msg, sizeof msg) != 0) {
+                fprintf(stderr, "soon: cannot read '%s': %s\n", q, msg);
+                failed++;
+                continue;
+            }
+            store_add_item(st, &it);
+            quick_describe(&it, desc, sizeof desc);
+            quick_item_free(&it);
+            printf("added  %s%s%s\n", desc, msg[0] ? "  -- " : "", msg);
+            added++;
+        }
+        if (f != stdin) fclose(f);
+    } else {
+        for (int i = 0; i < argc; i++) {
+            if (line[0]) strncat(line, " ", sizeof line - strlen(line) - 1);
+            strncat(line, argv[i], sizeof line - strlen(line) - 1);
+        }
+        item_t it;
+        char msg[160], desc[600];
+        if (quick_parse(line, today, &it, msg, sizeof msg) != 0) {
+            fprintf(stderr, "soon: cannot read '%s': %s\n", line, msg);
+            return 1;
+        }
+        store_add_item(st, &it);
+        quick_describe(&it, desc, sizeof desc);
+        quick_item_free(&it);
+        printf("added  %s%s%s\n", desc, msg[0] ? "  -- " : "", msg);
+        added++;
+    }
+    if (added && store_save(st) != 0) { perror(st->path); return 1; }
+    return failed ? 1 : 0;
 }
 
 int main(int argc, char **argv)
@@ -314,6 +373,13 @@ int main(int argc, char **argv)
             today = civil_to_days(y, m, d);
         else today = (daynum_t)(now_utc() / 86400);
     }
+    if (optind < argc && !strcmp(argv[optind], "quick")) {
+        rc = quick_cli(&st, today, argc - optind - 1, argv + optind + 1);
+        contacts_free(&cs);
+        store_free(&st);
+        return rc;
+    }
+
     daynum_t start = -1;
     if (optind < argc) {
         char expr[256] = "";

@@ -25,17 +25,20 @@
  *   H-1          status line / prompts
  * layout() decides cal_h and ag_h from the terminal size on every redraw.
  */
+#define _POSIX_C_SOURCE 200809L
 #include "app.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../core/cities.h"
 #include "../core/config.h"
 #include "../core/datejump.h"
+#include "../core/quick.h"
 #include "../core/sun.h"
 #include "../core/tz.h"
 #include "../core/text.h"
@@ -572,7 +575,7 @@ static void draw_menu(app_t *a, menu_t which)
 {
     if (a->menu_rows < 2) return;
     static const menu_item_t main1[] = { {".","Today"}, {"[ ]","Week"}, {"{ }","Month"}, {"( )","Year"}, {"n p","Period"}, {"+ -","Zoom"}, {"g","Go to"}, {"Tab","Items"}, {"s","Sun"}, {"z","Slot"} };
-    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"/","Search"}, {"C","Contacts"}, {"A","Upcoming"}, {"#","Filter"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
+    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"o","Quick add"}, {"/","Search"}, {"C","Contacts"}, {"A","Upcoming"}, {"#","Filter"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t items1[] = { {"j k","Item"}, {"h l","Day"}, {"Enter","Edit"}, {"x","Done"}, {"m","Move"}, {"d","Delete"}, {"Esc","Leave"} };
     static const menu_item_t items2[] = { {"a","Event"}, {"T","Todo"}, {".","Today"}, {"s","Sun"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t form1[] = { {"Enter/Tab","Next field"}, {"S-Tab","Previous"}, {"^Enter ^S","Save"}, {"Esc","Cancel"} };
@@ -1195,6 +1198,8 @@ static void draw_help(app_t *a)
         "n p  PgDn PgUp     next / previous period of the current view",
         "g                  go to a date: 14.9.  sep 14  +3w  fri  next mon  w38  eom",
         "Tab                into the day's items: j/k move, Enter edits, Esc leaves",
+        "o  O               quick add: one typed line ('Dentist thu 14:30 @Clinic #medical',",
+        "                   'Pay HOA due:eom every monthly'); O captures many lines in $EDITOR",
         "a  T               new event / new todo. In forms: Enter confirms a field and",
         "                   moves on (the last field saves), Ctrl-Enter or Ctrl-S save from",
         "                   anywhere, up/down move between fields, t or . is today, and the",
@@ -1230,6 +1235,8 @@ static void draw_slots_sheet(app_t *a);
 static void draw_dayloc_sheet(app_t *a);
 static void draw_search_sheet(app_t *a);
 static void tag_filter_form(app_t *a);
+static void quick_add(app_t *a);
+static void editor_capture(app_t *a);
 static void open_upcoming(app_t *a);
 
 static void draw_all(app_t *a)
@@ -2206,6 +2213,135 @@ static void add_todo(app_t *a)
     save(a);
 }
 
+/* ---------- freeform capture ---------- */
+
+/* add one parsed line to the store; cursor follows the item */
+static int quick_add_item(app_t *a, item_t *it)
+{
+    ensure_place(a, it->at);
+    int i = store_add_item(a->st, it);
+    if (i >= 0) {
+        const item_t *x = &a->st->items[i];
+        if (x->day >= 0) a->cur = x->day;
+        else if (x->due >= 0) a->cur = x->due;
+    }
+    return i;
+}
+
+/* o: a one-line prompt that stays open for the next line until Esc or an empty line */
+static void quick_add(app_t *a)
+{
+    char buf[512] = "";
+    const char *label = "quick add: ";
+    int added = 0;
+    for (;;) {
+        draw_all(a);
+        if (!prompt(a, label, buf, sizeof buf) || !buf[0]) break;
+        item_t it;
+        char msg[160];
+        if (quick_parse(buf, a->today, &it, msg, sizeof msg) != 0) {
+            label = "cannot parse; fix or Esc: ";
+            set_msg(a, true, "%s", msg);
+            continue;                       /* the line stays for fixing */
+        }
+        quick_add_item(a, &it);
+        char desc[600];
+        quick_describe(&it, desc, sizeof desc);
+        quick_item_free(&it);
+        save(a);
+        set_msg(a, false, "added: %.200s%s%s", desc, msg[0] ? "  \xC2\xB7 " : "", msg[0] ? msg : "");
+        label = "added \xC2\xB7 next (Esc ends): ";
+        buf[0] = 0;
+        added++;
+        a->sel = -1;
+    }
+    if (added) set_msg(a, false, "%d item%s added", added, added == 1 ? "" : "s");
+}
+
+/* parse editor/file text: one item per line, '# ' comments skipped.
+ * Failures are collected into bad (newline-joined). Returns how many were added. */
+static int quick_add_text(app_t *a, const char *text, int *nbad, char *bad, size_t badn)
+{
+    int added = 0;
+    size_t bl = strlen(bad);
+    const char *p = text;
+    while (*p) {
+        const char *nl = strchr(p, '\n');
+        size_t len = nl ? (size_t)(nl - p) : strlen(p);
+        char line[1024];
+        if (len >= sizeof line) len = sizeof line - 1;
+        memcpy(line, p, len);
+        line[len] = 0;
+        p = nl ? nl + 1 : p + len;
+        char *q = line;
+        while (*q == ' ' || *q == '\t') q++;
+        if (!*q || (q[0] == '#' && (q[1] == ' ' || !q[1]))) continue;    /* blank or comment */
+        item_t it;
+        char msg[160];
+        if (quick_parse(q, a->today, &it, msg, sizeof msg) != 0) {
+            (*nbad)++;
+            bl += (size_t)snprintf(bad + bl, badn > bl ? badn - bl : 0, "# %s:\n%s\n", msg, q);
+            continue;
+        }
+        quick_add_item(a, &it);
+        quick_item_free(&it);
+        added++;
+    }
+    return added;
+}
+
+/* O: capture many lines in $VISUAL / $EDITOR; unparsed lines come back once for fixing */
+static void editor_capture(app_t *a)
+{
+    const char *ed = getenv("VISUAL");
+    if (!ed || !*ed) ed = getenv("EDITOR");
+    if (!ed || !*ed) ed = "vi";
+    const char *tmp = getenv("TMPDIR");
+    if (!tmp || !*tmp) tmp = "/tmp";
+    char path[512];
+    snprintf(path, sizeof path, "%s/soon-quick-XXXXXX", tmp);
+    int fd = mkstemp(path);
+    if (fd < 0) { set_msg(a, true, "cannot create a file under %s", tmp); return; }
+    FILE *f = fdopen(fd, "w");
+    if (!f) { close(fd); unlink(path); set_msg(a, true, "cannot open the capture file"); return; }
+    fputs(quick_cheatsheet(), f);
+    fclose(f);
+
+    int added = 0, nbad = 0;
+    bool aborted = false;
+    for (int round = 0; round < 2; round++) {
+        char cmd[640];
+        snprintf(cmd, sizeof cmd, "%s '%s'", ed, path);
+        term_close();
+        int rc = system(cmd);
+        term_open();
+        resize(a);
+        if (rc != 0) { set_msg(a, true, "%s exited with an error; nothing read this round", ed); aborted = true; break; }
+        f = fopen(path, "r");
+        if (!f) break;
+        char text[16384];
+        size_t n = fread(text, 1, sizeof text - 1, f);
+        fclose(f);
+        text[n] = 0;
+        nbad = 0;
+        char bad[4096] = "";
+        added += quick_add_text(a, text, &nbad, bad, sizeof bad);
+        if (added) save(a);
+        if (!nbad || round == 1) break;
+        f = fopen(path, "w");                   /* failures go back for one more pass */
+        if (!f) break;
+        fputs("# these lines could not be read - fix them, or delete them to drop them\n", f);
+        fputs(bad, f);
+        fclose(f);
+    }
+    unlink(path);
+    a->sel = -1;
+    draw_all(a);
+    if (aborted) return;
+    if (nbad) set_msg(a, true, "%d item%s added, %d line%s dropped", added, added == 1 ? "" : "s", nbad, nbad == 1 ? "" : "s");
+    else set_msg(a, false, "%d item%s added", added, added == 1 ? "" : "s");
+}
+
 static void ensure_selection(app_t *a)
 {
     if (selected(a) >= 0) return;
@@ -2985,6 +3121,8 @@ static bool slots_sheet_key(app_t *a, int k)
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
     case '#': tag_filter_form(a); return true;
+    case 'o': quick_add(a); return true;
+    case 'O': editor_capture(a); return true;
     case 'A': open_upcoming(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
@@ -3112,6 +3250,8 @@ static bool dayloc_key(app_t *a, int k)
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
     case '#': tag_filter_form(a); return true;
+    case 'o': quick_add(a); return true;
+    case 'O': editor_capture(a); return true;
     case 'A': open_upcoming(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
@@ -3324,6 +3464,8 @@ static bool search_key(app_t *a, int k)
     case 'v': set_table(a, TBL_SLOTS); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
     case '#': tag_filter_form(a); return true;
+    case 'o': quick_add(a); return true;
+    case 'O': editor_capture(a); return true;
     case 'A': open_upcoming(a); return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
@@ -3362,6 +3504,8 @@ static bool table_key(app_t *a, int k)
     case 'V': set_table(a, a->table == TBL_SLOTS ? TBL_LAST : a->table - 1); return true;
     case 'C': set_table(a, TBL_CONTACTS); return true;
     case '#': tag_filter_form(a); return true;
+    case 'o': quick_add(a); return true;
+    case 'O': editor_capture(a); return true;
     case 'A': open_upcoming(a); return true;
     case '/': start_search(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
@@ -3486,6 +3630,8 @@ static void handle_key(app_t *a, int k)
     case KEY_BTAB: case 'I': enter_itemmode(a, -1); return;
     case 'a': add_event(a); return;
     case 'T': add_todo(a); return;
+    case 'o': quick_add(a); return;
+    case 'O': editor_capture(a); return;
     case 'x': toggle_done(a); return;
     case 'e': edit_selected(a); return;
     case 'm': move_selected(a); return;

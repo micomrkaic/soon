@@ -4,12 +4,12 @@ CFLAGS  ?= -std=c17 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign
 CFLAGS  += -DSOON_VERSION=\"$(VERSION)\"
 LDLIBS   = -lm
 
-CORE     = core/civil.c core/datejump.c core/sun.c core/utf8.c core/model.c core/cities.c core/text.c core/contacts.c core/org.c core/ics.c core/config.c
+CORE     = core/civil.c core/datejump.c core/sun.c core/utf8.c core/model.c core/cities.c core/text.c core/contacts.c core/org.c core/ics.c core/config.c core/quick.c
 UI       = ui/grid.c ui/app.c
 PLATFORM = platform/tz_posix.c platform/term_posix.c
 HDRS     = $(wildcard core/*.h ui/*.h)
 
-TESTS    = build/test_civil build/test_datejump build/test_sun build/test_tz build/test_utf8 build/test_model build/test_codecs build/test_config
+TESTS    = build/test_civil build/test_datejump build/test_sun build/test_tz build/test_utf8 build/test_model build/test_codecs build/test_config build/test_quick
 
 .PHONY: all test clean install dist
 
@@ -44,6 +44,9 @@ build/test_codecs: test/test_codecs.c core/org.c core/ics.c core/contacts.c core
 
 build/test_config: test/test_config.c core/config.c core/text.c test/check.h | build
 	$(CC) $(CFLAGS) -o $@ test/test_config.c core/config.c core/text.c $(LDLIBS)
+
+build/test_quick: test/test_quick.c core/quick.c core/datejump.c core/model.c core/civil.c test/check.h | build
+	$(CC) $(CFLAGS) -o $@ test/test_quick.c core/quick.c core/datejump.c core/model.c core/civil.c $(LDLIBS)
 
 build/suncheck: tools/suncheck.c $(CORE) platform/tz_posix.c | build
 	$(CC) $(CFLAGS) -o $@ tools/suncheck.c $(CORE) platform/tz_posix.c $(LDLIBS)
