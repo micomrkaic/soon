@@ -1,0 +1,461 @@
+.\" soon - keyboard-driven agenda and todo TUI
+.\" Copyright (C) 2026 Mico Mrkai\['c]
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH SOON 1 "November 2026" "soon 0.1.0" "User Commands"
+.SH NAME
+soon \- keyboard-driven agenda and todo TUI
+.SH SYNOPSIS
+.B soon
+.RI [ options ]
+.RI [ DATE ]
+.br
+.B soon quick
+.IR TEXT ...\&
+|
+.I FILE
+| \-
+.br
+.B soon export
+.BR org | ics | vcf
+.RI [ FILE ]
+.br
+.B soon import
+.BR org | ics | vcf
+.I FILE
+.br
+.B soon config
+.br
+.B soon manual
+.SH DESCRIPTION
+.B soon
+is a calendar and todo manager for the terminal. It keeps events, todos,
+places, a location timeline and a contact list in plain UTF-8 text files,
+shows them in year, three-month, month, week and day views, and is driven
+entirely from the keyboard. It depends on nothing but the C library.
+.PP
+Without arguments it opens the interface on today. With a
+.I DATE
+it opens on that day; the date can be written in any of the forms the
+.B g
+command accepts (see
+.BR "GO TO A DATE" ).
+When standard output is not a terminal, as in
+.BR "soon | head" ,
+it prints what is coming up instead.
+.SH OPTIONS
+.TP
+.BI \-f " FILE"
+Agenda file. Default:
+.BR $SOON_FILE ,
+else
+.IR ~/.local/share/soon/agenda.soon .
+.TP
+.BI \-c " FILE"
+Contacts file. Default:
+.BR $SOON_CONTACTS ,
+else
+.I contacts.soon
+next to the agenda file.
+.TP
+.BI \-C " FILE"
+Configuration file. Default:
+.BR $SOON_CONFIG ,
+else
+.IR ~/.config/soon/config .
+.TP
+.BI \-s " SLOT"
+Minutes per slot in the week and day views: 5, 10, 15, 30 or 60
+(default 15).
+.TP
+.B \-a
+ASCII glyphs only; no box-drawing or marker characters.
+.TP
+.B \-m
+Start without the key menu at the bottom
+.RB ( M
+toggles it).
+.TP
+.B \-p
+Print what is coming up instead of opening the interface.
+.TP
+.BI \-d " DAYS"
+How far ahead
+.B \-p
+looks (default 7).
+.TP
+.B \-V
+Print the version.
+.TP
+.B \-h
+Print a usage summary.
+.SH SUBCOMMANDS
+.TP
+.BI "quick " TEXT ...
+Add one item written as a single line (see
+.BR "QUICK CAPTURE" ).
+With a single argument naming a readable file, or
+.BR \- ,
+read one item per line from that file or from standard input; blank lines
+and lines starting with
+.B "# "
+are skipped. Each added item is echoed; lines that cannot be read are
+reported on standard error and the exit status is 1.
+.TP
+.BI "export " "org|ics|vcf " [ FILE ]
+Write the agenda as org-mode or iCalendar, or the contacts as vCard, to
+.I FILE
+or standard output.
+.TP
+.BI "import " "org|ics|vcf FILE"
+Merge items or contacts from a file
+.RB ( \-
+for standard input). Existing entries are updated by identity; nothing is
+deleted.
+.TP
+.B config
+Print a commented default configuration file. Redirect it to
+.I ~/.config/soon/config
+to start customizing.
+.TP
+.B manual
+Show this manual page, whether or not
+.B soon
+is installed: the page is looked for next to the executable (a source
+checkout) and under the installation prefix.
+.SH KEYS
+The views nest: year, three months, month, week, day. The agenda panel
+under the calendar lists the cursor day's items, its open todos and what
+is coming soon.
+.SS Moving
+.TP
+.BR "h j k l" ", arrows"
+Move by day; by time slot in the week and day views.
+.TP
+.BR "." ", " t
+Today.
+.TP
+.BR "[ ]" "   " "{ }" "   " "( )"
+Back and forward a week, a month, a year.
+.TP
+.BR + ", Enter   " \- ", Backspace"
+Zoom in and out through the views.
+.TP
+.BR "n p" ", PgDn PgUp"
+Next and previous period of the current view.
+.TP
+.B g
+Go to a date (see
+.BR "GO TO A DATE" ).
+.TP
+.B Tab
+Into the day's items:
+.B j/k
+move,
+.B Enter
+edits,
+.B Esc
+leaves.
+.SS Items
+.TP
+.B o
+Quick add: a one-line prompt that stays open for the next line until an
+empty line or
+.BR Esc .
+.TP
+.B O
+Bulk add: opens
+.B $VISUAL
+or
+.B $EDITOR
+on a buffer with the grammar as comments, one item per line. Lines that
+cannot be read come back once for fixing.
+.TP
+.BR a ", " T
+New event, new todo, through a form.
+.TP
+.BR e " " x " " m " " d
+Edit, mark done, move, delete the selected item. Deleting one occurrence
+of a repeating item asks whether to skip only that occurrence.
+.TP
+.B #
+Filter every view down to one tag. Press again and clear the field
+.RB ( Ctrl-U )
+to remove the filter. The title bar shows the active tag.
+.TP
+.B A
+Upcoming: open todos in deadline order, then every occurrence for the year
+ahead, as one list. With a filter active this is the long view of one
+area of life.
+.TP
+.B /
+Search items and contacts;
+.B Enter
+jumps to the hit. Search ignores the tag filter.
+.SS Places and sheets
+.TP
+.B s
+Sun and twilight panel for the day's location.
+.TP
+.BR L ", " H
+Location for a range of days; home location.
+.TP
+.BR v ", " V
+Cycle through the sheets: days (slots by days), locations by date, todos,
+events, places, contacts. Arrows move,
+.B Enter
+edits or creates,
+.B a
+adds a row.
+.TP
+.B C
+The contacts sheet directly.
+.TP
+.B z
+Cycle the slot size: 5, 10, 15, 30, 60 minutes.
+.SS Program
+.TP
+.BR w " " q " " Q
+Save; save and quit; quit without saving.
+.TP
+.B M
+Show or hide the key menu.
+.TP
+.BR ? ", " Esc
+Help; close a panel or deselect.
+.SH FORMS
+.B Enter
+confirms a field and moves to the next; on the last field it saves.
+.B Ctrl-S
+saves from anywhere, and so does
+.B Ctrl-Enter
+on terminals that can send it (xterm, VTE, kitty, foot, WezTerm; not
+Terminal.app).
+.B Esc
+cancels. Up and down move between fields wherever a field does not need
+the vertical arrows itself; the date calendar, the time and duration
+strips and the pick lists do, so
+.B Tab
+and
+.B Shift-Tab
+always work.
+.PP
+On a date field the arrows walk a calendar,
+.B n/p
+move a month,
+.B t
+or
+.B .
+is today,
+.B \-
+clears an optional date. Time fields take typed digits or
+.B n
+for now; durations take presets or
+.B 1h30
+typed. The Tags pane lists every known tag (the
+.B tags:
+line of the configuration plus every tag in use):
+.B up/down
+pick, the right arrow adds or removes the highlighted one, typing narrows,
+and new words simply become new tags.
+.SH QUICK CAPTURE
+.BR o ,
+.B O
+and
+.B soon quick
+share one grammar: one line is one item. Bare words become the title;
+everything else is recognized in any order.
+.TP
+.BR 14:30 ", " 9:30\-9:45
+A time (24h) makes the line an event; the default duration is an hour, a
+range sets it.
+.TP
+.BR thu ", " tomorrow ", " 5.11. ", " "sep 14" ", " "next fri" ", " eom ", " +3
+A date, in any form
+.B g
+understands; the longest match wins and only the first date counts.
+.TP
+.BI due: DATE
+A todo deadline, as one compact token
+.RB ( due:5.11 ", " due:eom ", " due:fri ).
+.TP
+.BI # tag
+A tag; any number of them.
+.TP
+.BI @ place
+.RB "A place; " @"Duluth\ GA" " for several words."
+.TP
+.BI & who
+.RB "A contact; " &"Simon\ Podnar" " likewise."
+.TP
+.BR !1 " .. " !5
+Priority, todos only.
+.TP
+.BR +45m ", " +1h30
+Duration; it needs a unit, so
+.B +2
+is a date two days ahead.
+.TP
+.B *
+An all-day event instead of a todo.
+.TP
+.BI every " rule"
+A repeat:
+.BR "every mon wed" ,
+.BR "every weekdays" ,
+.BR "every 2 weeks until 20.12" ,
+.BR "every day" ,
+.BR "every monthly" .
+The rule runs to the next sigiled token or the end of the line.
+.PP
+Quoted words always stay in the title, so
+.B \(dqFish fri\(dq sat
+is a todo titled
+.I Fish fri
+on Saturday. Lone integers are never read as dates:
+.I Chapter 14 notes
+is one undated todo. A time without a date means today; a repeat without
+a date starts today.
+.PP
+Examples:
+.PP
+.RS
+.nf
+Dentist cleaning thu 14:30 +45m @Clinic #medical
+Renew car insurance due:5.11 !2 #financial #car
+Standup mon 9:30\-9:45 every weekdays
+Pay HOA due:eom every monthly #financial
+Call Simon #family
+.fi
+.RE
+.SH GO TO A DATE
+The
+.B g
+prompt, the
+.I DATE
+argument and every date in the quick grammar accept, case-insensitively:
+.PP
+.RS
+.nf
+t today    tom tomorrow    yes yesterday
++3  +3d  \-2w  +1m  \-1y              relative to today
+2026\-09\-14  2026\-09  2026           ISO date, month, year
+14.9.  14.9.2026   9/14  9/14/2026    European and US forms
+sep  september   sep 14   14 sep 2026
+mon .. sun   next fri   last fri
+next week   next month   last year
+w38   w38 2027   2027\-w38             Monday of an ISO week
+bom  eom  boy  eoy                    first and last day of month, year
+.fi
+.RE
+.SH CONFIGURATION
+.I ~/.config/soon/config
+is a plain
+.B key: value
+file;
+.B soon config
+prints a commented default. Keys:
+.TP
+.B slot
+Minutes per slot in the week and day views.
+.TP
+.B sheet_slot
+Minutes per slot in the days sheet.
+.TP
+.BR work_start ", " work_end
+Working hours; the views start there and rows outside are dimmed.
+.TP
+.B first_weekday
+.BR monday ", " sunday " or " saturday .
+Week numbers stay ISO.
+.TP
+.B due_soon
+Days ahead within which a todo with a due date is shown as due soon.
+.TP
+.B tags
+Predefined tags, space-separated, offered in the Tags pane and the
+.B #
+filter alongside the tags already in use.
+.TP
+.B menu
+.BR on " or " off :
+the key menu at the bottom.
+.TP
+.B unicode
+.BR auto ", " on " or " off :
+box and marker glyphs.
+.TP
+.B palette
+.BR default " or " mono .
+.TP
+.BI "color " role
+Per-role colour:
+.IR "fg [on bg] [bold] [dim] [underline] [inverse] [italic]" .
+Roles: cursor today busy busier event eventsel allday todo overdue
+duesoon tododone sel box panel err now field focus rule titlebar.
+The defaults are deutan-safe (blue, yellow, magenta, cyan; never red
+against green). Terminals without italics can use
+.B "color duesoon: bright\-yellow underline"
+instead.
+.SH FILES
+.TP
+.I ~/.local/share/soon/agenda.soon
+Events, todos, places and the location timeline. The format is
+documented in
+.IR FORMAT.md .
+.TP
+.I ~/.local/share/soon/contacts.soon
+Contacts.
+.TP
+.I ~/.config/soon/config
+Configuration.
+.PP
+All three are plain UTF-8 text and safe to edit by hand or keep under
+version control. Saves are atomic (written to a temporary file and
+renamed).
+.SH ENVIRONMENT
+.TP
+.BR SOON_FILE ", " SOON_CONTACTS ", " SOON_CONFIG
+Override the three file locations.
+.TP
+.BR XDG_DATA_HOME ", " XDG_CONFIG_HOME
+Respected for the defaults.
+.TP
+.BR VISUAL ", " EDITOR
+The editor used by
+.BR O ;
+.B vi
+when both are unset.
+.TP
+.B TZ
+Consulted on first run to pick a home location when the agenda has none.
+.SH EXIT STATUS
+0 on success; 1 when a file cannot be read or written or when
+.B quick
+could not read every line; 2 for a usage error.
+.SH EXAMPLES
+.TP
+.B soon
+Open on today.
+.TP
+.B soon next mon
+Open on Monday of next week.
+.TP
+.B soon \-p \-d 14
+Print the next two weeks.
+.TP
+.B soon quick Dentist thu 14:30 '#medical'
+Add an event from the shell. Quote the tag, or the shell drops it as a
+comment.
+.TP
+.B echo 'Call Simon #family' | soon quick \-
+The same from a pipe.
+.TP
+.B soon export ics > agenda.ics
+Hand the agenda to another calendar.
+.SH SEE ALSO
+.IR FORMAT.md " and " README.md
+in the source distribution or under the installed documentation
+directory.
+.SH AUTHOR
+Mico Mrkai\['c]. Licensed under the GNU General Public License, version 3 or
+later.

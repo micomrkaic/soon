@@ -38,6 +38,9 @@
 #ifndef SOON_VERSION
 #define SOON_VERSION "dev"
 #endif
+#ifndef SOON_PREFIX
+#define SOON_PREFIX "/usr/local"
+#endif
 
 static long long now_utc(void)
 {
@@ -189,6 +192,7 @@ static void usage(void)
         "  soon export org|ics|vcf [FILE]   write org-mode, iCalendar or vCard (default stdout)\n"
         "  soon import org|ics|vcf FILE     merge from a file (- for stdin); nothing is deleted\n"
         "  soon config                      print a commented default config file\n"
+        "  soon manual                      open the manual page (installed or not)\n"
         "  soon quick TEXT... | FILE | -    add items from a line, a file, or stdin\n"
         "                                   (soon quick Dentist thu 14:30 #medical)\n");
 }
@@ -244,6 +248,55 @@ static void print_soon(store_t *st, daynum_t from, daynum_t today, int days)
         if (!header) { printf("open todos\n"); header = true; }
         printf("  [ ] %s%s\n", it->title ? it->title : "", overdue ? "  (overdue)" : "");
     }
+}
+
+/* directory of the running executable: /proc/self/exe, else argv[0], else a PATH search */
+static bool exe_dir(const char *argv0, char *out, size_t n)
+{
+    char link[1024];
+    ssize_t k = readlink("/proc/self/exe", link, sizeof link - 1);
+    if (k > 0) { link[k] = 0; }
+    else if (strchr(argv0, '/')) snprintf(link, sizeof link, "%s", argv0);
+    else {
+        const char *path = getenv("PATH");
+        link[0] = 0;
+        while (path && *path) {
+            const char *colon = strchr(path, ':');
+            size_t len = colon ? (size_t)(colon - path) : strlen(path);
+            char cand[1024];
+            snprintf(cand, sizeof cand, "%.*s/%s", (int)len, path, argv0);
+            if (access(cand, X_OK) == 0) { snprintf(link, sizeof link, "%s", cand); break; }
+            path = colon ? colon + 1 : NULL;
+        }
+        if (!link[0]) return false;
+    }
+    char *slash = strrchr(link, '/');
+    if (!slash) return false;
+    *slash = 0;
+    snprintf(out, n, "%s", link[0] ? link : "/");
+    return true;
+}
+
+/* soon manual: open the man page from a checkout (build/soon or ./soon) or an install */
+static int show_manual(const char *argv0)
+{
+    char dir[1024], path[1200];
+    const char *rel[] = { "../doc/soon.1", "doc/soon.1", "../share/man/man1/soon.1" };
+    bool found = false;
+    if (exe_dir(argv0, dir, sizeof dir)) {
+        for (size_t i = 0; i < sizeof rel / sizeof rel[0] && !found; i++) {
+            snprintf(path, sizeof path, "%s/%s", dir, rel[i]);
+            if (access(path, R_OK) == 0) found = true;
+        }
+    }
+    if (!found) {
+        snprintf(path, sizeof path, "%s/share/man/man1/soon.1", SOON_PREFIX);
+        found = access(path, R_OK) == 0;
+    }
+    if (!found) { fprintf(stderr, "soon: cannot find soon.1 next to the executable or under %s; see README.md\n", SOON_PREFIX); return 1; }
+    execlp("man", "man", path, (char *)NULL);
+    fprintf(stderr, "soon: cannot run man; the page is at %s\n", path);
+    return 1;
 }
 
 /* soon quick "Pay HOA due:eom #financial"   one line from the arguments
@@ -326,6 +379,7 @@ int main(int argc, char **argv)
     }
 
     if (optind < argc && !strcmp(argv[optind], "config")) { fputs(config_template(), stdout); return 0; }
+    if (optind < argc && !strcmp(argv[optind], "manual")) return show_manual(argv[0]);
 
     config_t conf;
     config_defaults(&conf);

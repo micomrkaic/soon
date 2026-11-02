@@ -9,9 +9,22 @@ cell grid, time zones go through one shim).
 
 ## Build and run
 
-    make            # builds build/soon and runs the tests
-    make install    # copies it to ~/.local/bin/soon
-    soon             # opens the 3-month view at today
+    make            # builds build/soon
+    make test       # runs the unit tests
+    make install    # ~/.local/bin/soon, the man page, README/FORMAT/LICENSE
+    soon            # opens the 3-month view at today
+
+`make install` goes under `~/.local` by default — `bin/soon`,
+`share/man/man1/soon.1`, `share/doc/soon/` — so it needs no root and
+`man soon` works wherever `man` derives its search path from `PATH`
+(man-db on Linux does; on macOS add `~/.local/share/man` to `MANPATH` if
+`man soon` comes up empty). `make PREFIX=/usr/local install` for a system
+install, `make uninstall` (same `PREFIX`) removes everything it put there.
+
+Nothing else is needed at run time: the city table, the config template
+and the help are compiled in, and `soon manual` opens the man page whether
+you run `./build/soon` from a checkout or an installed copy — it looks
+next to the executable first, then under the install prefix.
 
 First run: an agenda file is created at `~/.local/share/soon/agenda.soon`
 (override with `-f FILE` or `$SOON_FILE`), and a home location is guessed
@@ -302,6 +315,7 @@ home. On first run home is guessed from the machine's time zone.
                             time zones, UTF-8, store, codecs, config)
     tools/drive.py          drives the app in a pseudo-terminal and prints the
                             screens (needs `pip install pyte`), used for UI checks
+    make man                view the man page from the checkout (doc/soon.1)
     make dist               source tarball
 
 The code has been fuzzed with random keys and resizes under AddressSanitizer

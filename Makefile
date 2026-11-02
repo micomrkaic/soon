@@ -1,7 +1,13 @@
 VERSION  = 0.1.0
 CC      ?= cc
 CFLAGS  ?= -std=c17 -O2 -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion
-CFLAGS  += -DSOON_VERSION=\"$(VERSION)\"
+CFLAGS  += -DSOON_VERSION=\"$(VERSION)\" -DSOON_PREFIX=\"$(PREFIX)\"
+
+# install layout: PREFIX=/usr/local for a system install; DESTDIR for packaging
+PREFIX  ?= $(HOME)/.local
+BINDIR   = $(DESTDIR)$(PREFIX)/bin
+MANDIR   = $(DESTDIR)$(PREFIX)/share/man/man1
+DOCDIR   = $(DESTDIR)$(PREFIX)/share/doc/soon
 LDLIBS   = -lm
 
 CORE     = core/civil.c core/datejump.c core/sun.c core/utf8.c core/model.c core/cities.c core/text.c core/contacts.c core/org.c core/ics.c core/config.c core/quick.c
@@ -11,7 +17,7 @@ HDRS     = $(wildcard core/*.h ui/*.h)
 
 TESTS    = build/test_civil build/test_datejump build/test_sun build/test_tz build/test_utf8 build/test_model build/test_codecs build/test_config build/test_quick
 
-.PHONY: all test clean install dist
+.PHONY: all test clean install uninstall man dist
 
 all: build/soon
 
@@ -55,8 +61,20 @@ test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
 
 install: build/soon
-	install -d $(HOME)/.local/bin
-	install -m 755 build/soon $(HOME)/.local/bin/soon
+	install -d $(BINDIR) $(MANDIR) $(DOCDIR)
+	install -m 755 build/soon $(BINDIR)/soon
+	install -m 644 doc/soon.1 $(MANDIR)/soon.1
+	install -m 644 README.md FORMAT.md LICENSE $(DOCDIR)
+	@echo "installed: $(BINDIR)/soon  $(MANDIR)/soon.1  $(DOCDIR)/"
+	@case ":$$PATH:" in *":$(PREFIX)/bin:"*) ;; *) echo "note: $(PREFIX)/bin is not on your PATH";; esac
+
+uninstall:
+	rm -f $(BINDIR)/soon $(MANDIR)/soon.1
+	rm -rf $(DOCDIR)
+	@echo "removed soon from $(PREFIX)"
+
+man: doc/soon.1
+	man doc/soon.1
 
 clean:
 	rm -rf build
