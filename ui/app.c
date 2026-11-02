@@ -485,7 +485,7 @@ static int *table_rows(app_t *a, int *n);
 
 static void draw_title(app_t *a)
 {
-    char left[256], right[256], clock[128], there[128] = "";
+    char left[512], right[256], clock[128], there[128] = "";
     civil_t c = days_to_civil(a->today);
     const place_t *home = a->st->home ? store_find_place(a->st, a->st->home) : NULL;
     char ab[16];
@@ -550,12 +550,12 @@ static void draw_infobar(app_t *a)
         }
         snprintf(seg[nseg++], sizeof seg[0], "day %dh%02dm", (int)(s.day_length / 60), (int)s.day_length % 60);
     }
-    char line[1000] = "";
+    char line[6 * (sizeof seg[0] + 8)] = "";       /* every segment and separator fits */
     for (int i = 0; i < nseg; i++) {
-        char cand[1000];
-        snprintf(cand, sizeof cand, "%s%s%s", line, i ? "  \xC2\xB7  " : " ", seg[i]);
-        if (utf8_swidth(cand) > a->W) break;
-        snprintf(line, sizeof line, "%s", cand);
+        const char *sep = i ? "  \xC2\xB7  " : " ";
+        if (utf8_swidth(line) + utf8_swidth(sep) + utf8_swidth(seg[i]) > a->W) break;
+        size_t len = strlen(line);
+        snprintf(line + len, sizeof line - len, "%s%s", sep, seg[i]);
     }
     grid_fill(&a->g, 0, 1, a->W, 1, ' ', S_NORMAL);
     grid_puts(&a->g, 0, 1, line, a->W, S_NORMAL);
@@ -2391,7 +2391,7 @@ static void edit_raw(app_t *a)
         if (rc < 0) { set_msg(a, true, "no editor on this platform"); return; }
         if (rc > 0) { set_msg(a, true, "the editor exited with an error; item unchanged"); return; }
         /* drop comment lines, see whether anything is left */
-        char body[16384];
+        char body[sizeof buf - 128];           /* leaves room for the retry header */
         size_t bl = 0;
         bool any = false;
         for (const char *p = buf; *p; ) {
