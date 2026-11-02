@@ -47,5 +47,10 @@ void term_close(void);
 void term_size(int *w, int *h);
 int  term_read_key(int timeout_ms);   /* -1 timeout = block */
 void term_write(const char *s, unsigned long n);
+/* Hand `buf` to the user's editor ($VISUAL, $EDITOR, else vi) and read the result
+ * back into it. Leaves and re-enters raw mode around the editor; the caller
+ * redraws. Returns 0 on success, 1 when the editor exited with an error (buf
+ * untouched), -1 when no editor can run on this platform. */
+int  term_edit_text(char *buf, unsigned long size);
 
 #endif

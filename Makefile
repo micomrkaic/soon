@@ -17,7 +17,7 @@ HDRS     = $(wildcard core/*.h ui/*.h)
 
 TESTS    = build/test_civil build/test_datejump build/test_sun build/test_tz build/test_utf8 build/test_model build/test_codecs build/test_config build/test_quick
 
-.PHONY: all test clean install uninstall man dist
+.PHONY: all test check-ui check clean install uninstall man dist
 
 all: build/soon
 
@@ -59,6 +59,17 @@ build/suncheck: tools/suncheck.c $(CORE) platform/tz_posix.c | build
 
 test: $(TESTS)
 	@for t in $(TESTS); do ./$$t || exit 1; done
+
+# sanitizer build for the UI checks (and for fuzzing by hand)
+ASAN_CFLAGS = -std=c17 -O1 -g -fsanitize=address,undefined -Wall -DSOON_VERSION=\"$(VERSION)\" -DSOON_PREFIX=\"$(PREFIX)\"
+build/soon-asan: main.c $(CORE) $(UI) $(PLATFORM) $(HDRS) | build
+	$(CC) $(ASAN_CFLAGS) -o $@ main.c $(CORE) $(UI) $(PLATFORM) $(LDLIBS)
+
+# drives the sanitizer build through the fixtures in test/ui (needs python3 + pyte)
+check-ui: build/soon-asan
+	python3 tools/uicheck.py build/soon-asan
+
+check: test check-ui
 
 install: build/soon
 	install -d $(BINDIR) $(MANDIR) $(DOCDIR)

@@ -1,0 +1,16 @@
+place Home | 38.8048 -77.0469 | America/New_York
+home Home
+
+T 2026-01-05 Daily stretch
+  repeat: daily
+  tags: health
+
+T 2026-10-20 Book flights to Ljubljana
+  tags: family
+
+T - Check dental documentation
+  due: 2026-09-25
+  tags: medical
+
+E 2026-11-12 14:00 30m Dentist cleaning
+  tags: medical

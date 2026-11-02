@@ -24,6 +24,7 @@
 #include <errno.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -200,4 +201,37 @@ int term_read_key(int timeout_ms)
     uint32_t cp;
     utf8_decode(buf, &cp);
     return (int)cp;
+}
+
+int term_edit_text(char *buf, unsigned long size)
+{
+    const char *ed = getenv("VISUAL");
+    if (!ed || !*ed) ed = getenv("EDITOR");
+    if (!ed || !*ed) ed = "vi";
+    const char *tmp = getenv("TMPDIR");
+    if (!tmp || !*tmp) tmp = "/tmp";
+    char path[512];
+    snprintf(path, sizeof path, "%s/soon-edit-XXXXXX", tmp);
+    int fd = mkstemp(path);
+    if (fd < 0) return -1;
+    FILE *f = fdopen(fd, "w");
+    if (!f) { close(fd); unlink(path); return -1; }
+    fputs(buf, f);
+    fclose(f);
+
+    char cmd[640];
+    snprintf(cmd, sizeof cmd, "%s '%s'", ed, path);
+    int was_raw = raw_on;
+    if (was_raw) term_close();
+    int rc = system(cmd);
+    if (was_raw) term_open();
+    if (rc != 0) { unlink(path); return 1; }
+
+    f = fopen(path, "r");
+    if (!f) { unlink(path); return 1; }
+    size_t n = fread(buf, 1, size - 1, f);
+    buf[n] = 0;
+    fclose(f);
+    unlink(path);
+    return 0;
 }

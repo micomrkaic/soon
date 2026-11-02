@@ -25,6 +25,7 @@
  *   +45m +1h30 +2h         duration (needs a unit; "+3" and "+2w" are dates)
  *   thu  tomorrow  5.11.   a date, anywhere datejump understands one;
  *   sep 14  next fri  eom  multi-word forms work too (longest match wins)
+ *   sep 14-16  mon-wed     a span: an all-day event from the first day to the last
  *   due:5.11 due:eom       todo deadline (one token, compact datejump forms)
  *   #medical #car          tags, any number
  *   @Clinic @"Duluth GA"   place

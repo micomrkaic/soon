@@ -181,6 +181,37 @@ static bool try_date_window(tok_t *t, int n, int i, int w, daynum_t today, daynu
     return datejump_parse(buf, today, out, err, sizeof err) == 0;
 }
 
+/* a window whose last token is X-Y: X closes a date with the tokens before it,
+ * Y is either a bare day number in that month ("sep 14-16") or a date of its own
+ * ("14.9.-16.9.", "mon-wed"). *d2 is -1 when the tail does not read as a later day. */
+static bool try_date_range(tok_t *t, int n, int i, int w, daynum_t today, daynum_t *d1, daynum_t *d2)
+{
+    if (i + w > n) return false;
+    tok_t *last = &t[i + w - 1];
+    if (last->claimed || last->quoted || last->text[0] == '+') return false;
+    char *dash = strrchr(last->text, '-');
+    if (!dash || dash == last->text || !dash[1]) return false;
+    if (strchr(last->text, ':')) return false;                       /* a time range */
+    char saved[TOK_LEN];
+    memcpy(saved, last->text, sizeof saved);
+    *dash = 0;
+    bool ok = try_date_window(t, n, i, w, today, d1);
+    memcpy(last->text, saved, sizeof saved);
+    if (!ok) return false;
+    const char *y = dash + 1;
+    *d2 = -1;
+    if (all_digits(y)) {
+        civil_t c = days_to_civil(*d1);
+        int dd = atoi(y);
+        if (dd >= 1 && dd <= civil_days_in_month(c.y, c.m)) *d2 = civil_to_days(c.y, c.m, dd);
+    } else {
+        char err[64];
+        if (datejump_parse(y, today, d2, err, sizeof err) != 0) *d2 = -1;
+    }
+    if (*d2 >= 0 && *d2 < *d1) *d2 = -1;
+    return true;
+}
+
 /* ---------- the parser ---------- */
 
 int quick_parse(const char *line, daynum_t today, item_t *out, char *msg, size_t msglen)
@@ -190,7 +221,7 @@ int quick_parse(const char *line, daynum_t today, item_t *out, char *msg, size_t
     int n = tokenize(line, t, MAX_QTOK);
     if (n == 0) { add_msg(msg, msglen, "nothing on the line"); return -1; }
 
-    daynum_t day = -1, due = -1;
+    daynum_t day = -1, due = -1, until = -1;
     int start = -1, end = -1, dur = 0, pri = 0;
     bool allday = false, have_date = false, have_time = false;
     char tags[256] = "", place[256] = "", who[256] = "";
@@ -256,15 +287,14 @@ int quick_parse(const char *line, daynum_t today, item_t *out, char *msg, size_t
     for (int i = 0; i < n && !have_date; i++) {
         for (int w = 3; w >= 1; w--) {
             if (w == 1 && all_digits(t[i].text)) continue;
-            daynum_t d;
-            if (try_date_window(t, n, i, w, today, &d)) {
-                day = d;
-                have_date = true;
-                for (int j = i; j < i + w; j++) t[j].claimed = true;
-                break;
-            }
+            daynum_t d, d2;
+            bool iso = strlen(t[i + w - 1 < n ? i + w - 1 : i].text) >= 7 && t[i + w - 1 < n ? i + w - 1 : i].text[4] == '-';
+            if (!iso && try_date_range(t, n, i, w, today, &d, &d2)) { day = d; until = d2; have_date = true; if (d2 < 0) add_msg(msg, msglen, "the part after '-' is not a later day; ignored"); }
+            else if (try_date_window(t, n, i, w, today, &d)) { day = d; have_date = true; }
+            if (have_date) { for (int j = i; j < i + w; j++) t[j].claimed = true; break; }
         }
     }
+    if (until > day && !have_time) allday = true;               /* a span is an all-day event */
 
     /* what's left is the title */
     char title[512] = "";
@@ -284,6 +314,7 @@ int quick_parse(const char *line, daynum_t today, item_t *out, char *msg, size_t
     if (who[0]) out->who = dup_str(who);
     if (kind == ITEM_EVENT) {
         out->day = have_date ? day : today;
+        if (until > day) { if (have_time) add_msg(msg, msglen, "date span dropped (timed event)"); else out->until = until; }
         if (have_time) {
             out->start = start;
             if (end > start) out->dur = end - start;

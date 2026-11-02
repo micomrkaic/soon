@@ -85,6 +85,13 @@ filter active this is the long-term view of one area of life ("all
 medical items"), and `Enter` jumps to any row, `e` edits it, `x` marks it
 done. Search (`/`) stays global and ignores the filter.
 
+`E` opens the selected item as its text block (the same lines as in the
+agenda file) in `$VISUAL`/`$EDITOR`; this is where notes are written, since
+`note:` lines can be as many and as long as you like. The `id:` line keeps
+it the same item; deleting everything cancels. `u` undoes the last change
+and `U` redoes it — every saved change in the session is on a 32-deep
+ring, including bulk captures and raw edits.
+
 Freeform capture is the fast way in. `o` opens a one-line prompt that
 stays open between items; `O` hands a buffer to `$VISUAL`/`$EDITOR`, one
 item per line, with the grammar as comments at the top (lines it cannot
@@ -102,7 +109,8 @@ todo; a date is anything the `g` command understands (`thu`, `tomorrow`,
 `#tag`, `@place` (or `@"Duluth GA"`), `&who`, `!1`-`!5` priority, `+45m`
 duration, `*` for an all-day event, and a trailing `every ...` repeat
 (`every mon wed`, `every weekdays`, `every 2 weeks until 20.12`,
-`every monthly`). Quoted words always stay in the title; a bare word
+`every monthly`). A span — `sep 14-16`, `14.9.-20.9.`, `mon-wed` — makes a
+multi-day all-day event. Quoted words always stay in the title; a bare word
 that reads as a date is one (`fri`), so quote titles like `"Fish fri"`.
 Lone integers are never dates — `Chapter 14 notes` stays one todo.
 
@@ -137,6 +145,8 @@ on the date calendar.
     C                  contacts sheet
     A                  upcoming: open todos, then a year of occurrences, as a list
     o                  quick add: type items one line at a time
+    E                  edit the selected item as text in $EDITOR (notes live here)
+    u  U               undo / redo the last change (32 levels, this session)
     O                  bulk add: capture many lines in $VISUAL / $EDITOR
     #                  filter every view down to one tag (press again + Ctrl-U to clear)
     /                  search items and contacts; Enter jumps to the hit
@@ -315,6 +325,9 @@ home. On first run home is guessed from the machine's time zone.
                             time zones, UTF-8, store, codecs, config)
     tools/drive.py          drives the app in a pseudo-terminal and prints the
                             screens (needs `pip install pyte`), used for UI checks
+    make check-ui           drives the sanitizer build through test/ui fixtures
+                            (forms, tags, filter, capture, E, undo, sheets) and
+                            checks the screens; `make check` runs both suites
     make man                view the man page from the checkout (doc/soon.1)
     make dist               source tarball
 

@@ -809,6 +809,45 @@ static void put_field(sbuf_t *b, const char *key, const char *val)
     }
 }
 
+/* one item as its FORMAT.md block, trailing blank line included */
+static void put_item(sbuf_t *b, const item_t *it)
+{
+    char ds[16], du[16];
+    const char *title = it->title ? it->title : "";
+    if (it->kind == ITEM_EVENT) {
+        model_format_date(it->day, ds, sizeof ds);
+        if (it->start < 0) sb_printf(b, "E %s * %s\n", ds, title);
+        else {
+            model_format_dur(it->dur, du, sizeof du);
+            sb_printf(b, "E %s %02d:%02d %s %s\n", ds, it->start / 60, it->start % 60, du, title);
+        }
+    } else {
+        if (it->day >= 0) model_format_date(it->day, ds, sizeof ds); else strcpy(ds, "-");
+        sb_printf(b, "T %s %s\n", ds, title);
+    }
+    sb_printf(b, "  id: %s\n", it->id);
+    put_field(b, "at", it->at);
+    if (it->until >= 0) { model_format_date(it->until, ds, sizeof ds); sb_printf(b, "  until: %s\n", ds); }
+    if (it->due >= 0) { model_format_date(it->due, ds, sizeof ds); sb_printf(b, "  due: %s\n", ds); }
+    if (it->done_day >= 0) {
+        model_format_date(it->done_day, ds, sizeof ds);
+        sb_printf(b, "  done: %s %02d:%02d\n", ds, it->done_min / 60, it->done_min % 60);
+    }
+    if (it->pri) sb_printf(b, "  pri: %d\n", it->pri);
+    if (it->rep.freq != REP_NONE) { char rs[128]; repeat_format(&it->rep, rs, sizeof rs); sb_printf(b, "  repeat: %s\n", rs); }
+    if (it->nskips) {
+        sb_put(b, "  skip:", 7);
+        for (int k = 0; k < it->nskips; k++) { model_format_date(it->skips[k], ds, sizeof ds); sb_printf(b, " %s", ds); }
+        sb_put(b, "\n", 1);
+    }
+    put_field(b, "tags", it->tags);
+    put_field(b, "who", it->who);
+    put_field(b, "status", it->status);
+    put_field(b, "note", it->note);
+    if (it->extra) sb_printf(b, "%s\n", it->extra);
+    sb_put(b, "\n", 1);
+}
+
 char *store_serialize(store_t *st)
 {
     sbuf_t b = { 0, 0, 0 };
@@ -826,45 +865,28 @@ char *store_serialize(store_t *st)
     if (st->nplaces || st->home || st->nlocs) sb_put(&b, "\n", 1);
 
     qsort(st->items, (size_t)st->nitems, sizeof st->items[0], cmp_item);
-    for (int i = 0; i < st->nitems; i++) {
-        const item_t *it = &st->items[i];
-        char ds[16], du[16];
-        const char *title = it->title ? it->title : "";
-        if (it->kind == ITEM_EVENT) {
-            model_format_date(it->day, ds, sizeof ds);
-            if (it->start < 0) sb_printf(&b, "E %s * %s\n", ds, title);
-            else {
-                model_format_dur(it->dur, du, sizeof du);
-                sb_printf(&b, "E %s %02d:%02d %s %s\n", ds, it->start / 60, it->start % 60, du, title);
-            }
-        } else {
-            if (it->day >= 0) model_format_date(it->day, ds, sizeof ds); else strcpy(ds, "-");
-            sb_printf(&b, "T %s %s\n", ds, title);
-        }
-        sb_printf(&b, "  id: %s\n", it->id);
-        put_field(&b, "at", it->at);
-        if (it->until >= 0) { model_format_date(it->until, ds, sizeof ds); sb_printf(&b, "  until: %s\n", ds); }
-        if (it->due >= 0) { model_format_date(it->due, ds, sizeof ds); sb_printf(&b, "  due: %s\n", ds); }
-        if (it->done_day >= 0) {
-            model_format_date(it->done_day, ds, sizeof ds);
-            sb_printf(&b, "  done: %s %02d:%02d\n", ds, it->done_min / 60, it->done_min % 60);
-        }
-        if (it->pri) sb_printf(&b, "  pri: %d\n", it->pri);
-        if (it->rep.freq != REP_NONE) { char rs[128]; repeat_format(&it->rep, rs, sizeof rs); sb_printf(&b, "  repeat: %s\n", rs); }
-        if (it->nskips) {
-            sb_put(&b, "  skip:", 7);
-            for (int k = 0; k < it->nskips; k++) { model_format_date(it->skips[k], ds, sizeof ds); sb_printf(&b, " %s", ds); }
-            sb_put(&b, "\n", 1);
-        }
-        put_field(&b, "tags", it->tags);
-        put_field(&b, "who", it->who);
-        put_field(&b, "status", it->status);
-        put_field(&b, "note", it->note);
-        if (it->extra) sb_printf(&b, "%s\n", it->extra);
-        sb_put(&b, "\n", 1);
-    }
+    for (int i = 0; i < st->nitems; i++) put_item(&b, &st->items[i]);
     for (int i = 0; i < st->nraw; i++) sb_printf(&b, "%s\n", st->raw[i]);
     return b.s ? b.s : xstrdup("");
+}
+
+char *item_serialize(const item_t *it)
+{
+    sbuf_t b = { 0, 0, 0 };
+    put_item(&b, it);
+    return b.s ? b.s : xstrdup("");
+}
+
+bool item_parse(const char *text, item_t *out)
+{
+    store_t tmp;
+    store_init(&tmp, "");
+    store_parse(&tmp, text);
+    if (tmp.nitems != 1) { store_free(&tmp); return false; }
+    *out = tmp.items[0];           /* take ownership of the strings and skips */
+    tmp.nitems = 0;
+    store_free(&tmp);
+    return true;
 }
 
 /* ---------- file wrappers (not compiled for wasm) ---------- */

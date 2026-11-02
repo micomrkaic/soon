@@ -177,6 +177,22 @@ New event, new todo, through a form.
 Edit, mark done, move, delete the selected item. Deleting one occurrence
 of a repeating item asks whether to skip only that occurrence.
 .TP
+.B E
+Edit the selected item as its text block (see
+.IR FORMAT.md )
+in
+.B $VISUAL
+or
+.BR $EDITOR .
+Notes are written here, as
+.B note:
+lines. The
+.B id:
+line keeps it the same item; an empty buffer cancels.
+.TP
+.BR u ", " U
+Undo and redo the last change; 32 levels, kept for the session.
+.TP
 .B #
 Filter every view down to one tag. Press again and clear the field
 .RB ( Ctrl-U )
@@ -298,6 +314,9 @@ is a date two days ahead.
 .B *
 An all-day event instead of a todo.
 .TP
+.BR "sep 14\-16" ", " "14.9.\-20.9." ", " "mon\-wed"
+A span: an all-day event from the first day to the last.
+.TP
 .BI every " rule"
 A repeat:
 .BR "every mon wed" ,
@@ -323,6 +342,7 @@ Examples:
 Dentist cleaning thu 14:30 +45m @Clinic #medical
 Renew car insurance due:5.11 !2 #financial #car
 Standup mon 9:30\-9:45 every weekdays
+Conference sep 14\-16 @Vienna
 Pay HOA due:eom every monthly #financial
 Call Simon #family
 .fi

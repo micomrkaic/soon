@@ -84,6 +84,8 @@ void store_init(store_t *st, const char *path);
 void store_free(store_t *st);
 void store_parse(store_t *st, const char *text);   /* parse FORMAT.md text into the store */
 char *store_serialize(store_t *st);                /* malloc'd text; caller frees */
+char *item_serialize(const item_t *it);            /* one item's block; malloc'd */
+bool  item_parse(const char *text, item_t *out);   /* exactly one block; strings become the caller's */
 int  store_load(store_t *st);   /* 0 ok, 1 file missing (empty store), -1 error */
 int  store_save(store_t *st);   /* 0 ok, -1 error (errno set); atomic via rename */
 void item_blank(item_t *it, item_kind_t kind);     /* zero an item with -1 sentinels */

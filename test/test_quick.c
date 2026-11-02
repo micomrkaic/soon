@@ -183,6 +183,41 @@ static void test_ambiguity(void)
     quick_item_free(&it);
 }
 
+static void test_ranges(void)
+{
+    item_t it;
+    char msg[128];
+
+    CHECK_EQ(parse("Conference sep 14-16 @Vienna", &it, msg, sizeof msg), 0);
+    CHECK_EQ(it.kind, ITEM_EVENT);
+    CHECK_EQ(it.start, -1);
+    CHECK_EQ(it.day, civil_to_days(2026, 9, 14));
+    CHECK_EQ(it.until, civil_to_days(2026, 9, 16));
+    CHECK(!strcmp(it.title, "Conference"));
+    quick_item_free(&it);
+
+    CHECK_EQ(parse("Kranj 14.9.-20.9. #family", &it, msg, sizeof msg), 0);
+    CHECK_EQ(it.day, civil_to_days(2026, 9, 14));
+    CHECK_EQ(it.until, civil_to_days(2026, 9, 20));
+    quick_item_free(&it);
+
+    CHECK_EQ(parse("Offsite mon-wed", &it, msg, sizeof msg), 0);
+    CHECK_EQ(it.day, civil_to_days(2026, 10, 26));
+    CHECK_EQ(it.until, civil_to_days(2026, 10, 28));
+    quick_item_free(&it);
+
+    /* ISO dates are not spans; a bad or backward span is not a date at all */
+    CHECK_EQ(parse("Dentist 2026-11-05 9:00", &it, msg, sizeof msg), 0);
+    CHECK_EQ(it.day, civil_to_days(2026, 11, 5));
+    CHECK_EQ(it.until, -1);
+    quick_item_free(&it);
+    CHECK_EQ(parse("Thing sep 16-14", &it, msg, sizeof msg), 0);
+    CHECK_EQ(it.day, civil_to_days(2026, 9, 16));        /* "sep 16" wins, "-14" is warned about */
+    CHECK_EQ(it.until, -1);
+    CHECK(msg[0] != 0);
+    quick_item_free(&it);
+}
+
 static void test_errors(void)
 {
     item_t it;
@@ -203,6 +238,7 @@ int main(void)
     test_todos();
     test_repeats();
     test_ambiguity();
+    test_ranges();
     test_errors();
     CHECK_DONE("quick");
 }

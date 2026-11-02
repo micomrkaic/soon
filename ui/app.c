@@ -25,14 +25,12 @@
  *   H-1          status line / prompts
  * layout() decides cal_h and ag_h from the terminal size on every redraw.
  */
-#define _POSIX_C_SOURCE 200809L
 #include "app.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <stdlib.h>
 #include <string.h>
 #include "../core/cities.h"
@@ -90,6 +88,11 @@ typedef struct {
     table_t table_before_search;
     char msg[256];
     bool msg_err;
+    char *hist[32];      /* undo ring: serialized store before each saved change */
+    int nhist;
+    char *redo[32];
+    int nredo;
+    char *last;          /* the store as last saved */
 } app_t;
 
 /* ---------- palette (deutan-safe defaults; overridable from the config file) ---------- */
@@ -222,9 +225,58 @@ static void refresh_clock(app_t *a)
     }
 }
 
+#define HIST_MAX ((int)(sizeof ((app_t *)0)->hist / sizeof ((app_t *)0)->hist[0]))
+
+static void hist_push(char **stack, int *n, char *text)
+{
+    if (*n == HIST_MAX) { free(stack[0]); memmove(stack, stack + 1, (size_t)(HIST_MAX - 1) * sizeof *stack); (*n)--; }
+    stack[(*n)++] = text;
+}
+
+/* every change comes through here: the previous state goes on the undo ring */
 static void save(app_t *a)
 {
     if (store_save(a->st) != 0) set_msg(a, true, "save failed: %s (%s)", strerror(errno), a->st->path);
+    char *now = store_serialize(a->st);
+    if (!a->last) { a->last = now; return; }
+    if (!strcmp(now, a->last)) { free(now); return; }
+    hist_push(a->hist, &a->nhist, a->last);
+    while (a->nredo) free(a->redo[--a->nredo]);
+    a->last = now;
+}
+
+/* replace the store's contents with a serialized state */
+static void restore(app_t *a, const char *text)
+{
+    char path[1024];
+    snprintf(path, sizeof path, "%s", a->st->path);
+    store_free(a->st);
+    store_init(a->st, path);
+    store_parse(a->st, text);
+    a->st->dirty = true;
+    if (store_save(a->st) != 0) set_msg(a, true, "save failed: %s (%s)", strerror(errno), a->st->path);
+    a->sel = -1;
+    a->itemmode = false;
+}
+
+static void undo(app_t *a)
+{
+    if (!a->nhist) { set_msg(a, true, "nothing to undo"); return; }
+    char *prev = a->hist[--a->nhist];
+    hist_push(a->redo, &a->nredo, a->last);
+    a->last = prev;
+    restore(a, prev);
+    set_msg(a, false, "undone (%d more, U redoes)", a->nhist);
+}
+
+static void redo(app_t *a)
+{
+    if (!a->nredo) { set_msg(a, true, "nothing to redo"); return; }
+    char *next = a->redo[--a->nredo];
+    hist_push(a->hist, &a->nhist, a->last);
+    a->last = next;
+    restore(a, next);
+    set_msg(a, false, "redone (%d more)", a->nredo);
 }
 
 /* ---------- tags ---------- */
@@ -575,7 +627,7 @@ static void draw_menu(app_t *a, menu_t which)
 {
     if (a->menu_rows < 2) return;
     static const menu_item_t main1[] = { {".","Today"}, {"[ ]","Week"}, {"{ }","Month"}, {"( )","Year"}, {"n p","Period"}, {"+ -","Zoom"}, {"g","Go to"}, {"Tab","Items"}, {"s","Sun"}, {"z","Slot"} };
-    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"o","Quick add"}, {"/","Search"}, {"C","Contacts"}, {"A","Upcoming"}, {"#","Filter"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
+    static const menu_item_t main2[] = { {"a","Event"}, {"T","Todo"}, {"e","Edit"}, {"x","Done"}, {"d","Delete"}, {"L","Place"}, {"v","Sheets"}, {"o","Quick add"}, {"u","Undo"}, {"/","Search"}, {"C","Contacts"}, {"A","Upcoming"}, {"#","Filter"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t items1[] = { {"j k","Item"}, {"h l","Day"}, {"Enter","Edit"}, {"x","Done"}, {"m","Move"}, {"d","Delete"}, {"Esc","Leave"} };
     static const menu_item_t items2[] = { {"a","Event"}, {"T","Todo"}, {".","Today"}, {"s","Sun"}, {"M","Menu"}, {"?","Help"}, {"q","Quit"} };
     static const menu_item_t form1[] = { {"Enter/Tab","Next field"}, {"S-Tab","Previous"}, {"^Enter ^S","Save"}, {"Esc","Cancel"} };
@@ -1205,6 +1257,8 @@ static void draw_help(app_t *a)
         "                   anywhere, up/down move between fields, t or . is today, and the",
         "                   Tags pane lists known tags: up/down pick, right arrow adds",
         "e x m d            edit / done / move / delete the selected item",
+        "E                  edit the selected item as text in $EDITOR (notes live here)",
+        "u  U               undo / redo the last change (32 levels, this session)",
         "s                  sun and twilight panel for the day's location",
         "L  H               location for a range of days (from/until) / home",
         "z                  cycle slot size 5 10 15 30 60 min",
@@ -1235,6 +1289,10 @@ static void draw_slots_sheet(app_t *a);
 static void draw_dayloc_sheet(app_t *a);
 static void draw_search_sheet(app_t *a);
 static void tag_filter_form(app_t *a);
+static void ensure_selection(app_t *a);
+static void edit_raw(app_t *a);
+static void undo(app_t *a);
+static void redo(app_t *a);
 static void quick_add(app_t *a);
 static void editor_capture(app_t *a);
 static void open_upcoming(app_t *a);
@@ -2293,53 +2351,76 @@ static int quick_add_text(app_t *a, const char *text, int *nbad, char *bad, size
 /* O: capture many lines in $VISUAL / $EDITOR; unparsed lines come back once for fixing */
 static void editor_capture(app_t *a)
 {
-    const char *ed = getenv("VISUAL");
-    if (!ed || !*ed) ed = getenv("EDITOR");
-    if (!ed || !*ed) ed = "vi";
-    const char *tmp = getenv("TMPDIR");
-    if (!tmp || !*tmp) tmp = "/tmp";
-    char path[512];
-    snprintf(path, sizeof path, "%s/soon-quick-XXXXXX", tmp);
-    int fd = mkstemp(path);
-    if (fd < 0) { set_msg(a, true, "cannot create a file under %s", tmp); return; }
-    FILE *f = fdopen(fd, "w");
-    if (!f) { close(fd); unlink(path); set_msg(a, true, "cannot open the capture file"); return; }
-    fputs(quick_cheatsheet(), f);
-    fclose(f);
-
+    static char buf[16384];
+    snprintf(buf, sizeof buf, "%s", quick_cheatsheet());
     int added = 0, nbad = 0;
-    bool aborted = false;
     for (int round = 0; round < 2; round++) {
-        char cmd[640];
-        snprintf(cmd, sizeof cmd, "%s '%s'", ed, path);
-        term_close();
-        int rc = system(cmd);
-        term_open();
+        int rc = term_edit_text(buf, sizeof buf);
         resize(a);
-        if (rc != 0) { set_msg(a, true, "%s exited with an error; nothing read this round", ed); aborted = true; break; }
-        f = fopen(path, "r");
-        if (!f) break;
-        char text[16384];
-        size_t n = fread(text, 1, sizeof text - 1, f);
-        fclose(f);
-        text[n] = 0;
+        if (rc < 0) { set_msg(a, true, "no editor on this platform; use o or soon quick"); return; }
+        if (rc > 0) { set_msg(a, true, "the editor exited with an error; nothing read this round"); return; }
         nbad = 0;
         char bad[4096] = "";
-        added += quick_add_text(a, text, &nbad, bad, sizeof bad);
+        added += quick_add_text(a, buf, &nbad, bad, sizeof bad);
         if (added) save(a);
         if (!nbad || round == 1) break;
-        f = fopen(path, "w");                   /* failures go back for one more pass */
-        if (!f) break;
-        fputs("# these lines could not be read - fix them, or delete them to drop them\n", f);
-        fputs(bad, f);
-        fclose(f);
+        snprintf(buf, sizeof buf, "# these lines could not be read - fix them, or delete them to drop them\n%s", bad);
     }
-    unlink(path);
     a->sel = -1;
     draw_all(a);
-    if (aborted) return;
     if (nbad) set_msg(a, true, "%d item%s added, %d line%s dropped", added, added == 1 ? "" : "s", nbad, nbad == 1 ? "" : "s");
     else set_msg(a, false, "%d item%s added", added, added == 1 ? "" : "s");
+}
+
+/* E: the selected item as its FORMAT.md block in the editor; the block comes back once if it fails to parse */
+static void edit_raw(app_t *a)
+{
+    ensure_selection(a);
+    int si = selected(a);
+    if (si < 0) { set_msg(a, true, "nothing selected on this day"); return; }
+    static char buf[16384];
+    char *block = item_serialize(&a->st->items[si]);
+    snprintf(buf, sizeof buf,
+             "# edit the item below (format: FORMAT.md); the id line keeps it the same item\n"
+             "# fields: at: until: due: done: pri: repeat: skip: tags: who: status: note:\n"
+             "# a note may take several note: lines; delete everything to cancel\n%s", block);
+    free(block);
+    for (int round = 0; round < 2; round++) {
+        int rc = term_edit_text(buf, sizeof buf);
+        resize(a);
+        if (rc < 0) { set_msg(a, true, "no editor on this platform"); return; }
+        if (rc > 0) { set_msg(a, true, "the editor exited with an error; item unchanged"); return; }
+        /* drop comment lines, see whether anything is left */
+        char body[16384];
+        size_t bl = 0;
+        bool any = false;
+        for (const char *p = buf; *p; ) {
+            const char *nl = strchr(p, '\n');
+            size_t len = nl ? (size_t)(nl - p) : strlen(p);
+            if (!(p[0] == '#' && (len == 1 || p[1] == ' '))) {
+                if (len && bl + len + 2 < sizeof body) { memcpy(body + bl, p, len); bl += len; body[bl++] = '\n'; }
+                for (size_t i = 0; i < len; i++) if (p[i] != ' ' && p[i] != '\t') any = true;
+            }
+            p += len + (nl ? 1 : 0);
+        }
+        body[bl] = 0;
+        if (!any) { set_msg(a, false, "edit cancelled"); return; }
+        item_t it;
+        if (item_parse(body, &it)) {
+            if (!it.id[0]) memcpy(it.id, a->st->items[si].id, sizeof it.id);
+            item_free_strings(&a->st->items[si]);
+            free(a->st->items[si].skips);
+            a->st->items[si] = it;
+            a->st->dirty = true;
+            save(a);
+            if (it.day >= 0) a->cur = it.day;
+            a->sel = -1;
+            set_msg(a, false, "updated: %.200s", it.title ? it.title : "");
+            return;
+        }
+        if (round == 0) snprintf(buf, sizeof buf, "# that did not parse as one item (E line, T line, or indented fields) - fix or delete all\n%s", body);
+    }
+    set_msg(a, true, "could not read the block; item unchanged");
 }
 
 static void ensure_selection(app_t *a)
@@ -3123,6 +3204,8 @@ static bool slots_sheet_key(app_t *a, int k)
     case '#': tag_filter_form(a); return true;
     case 'o': quick_add(a); return true;
     case 'O': editor_capture(a); return true;
+    case 'u': undo(a); return true;
+    case 'U': redo(a); return true;
     case 'A': open_upcoming(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
@@ -3252,6 +3335,8 @@ static bool dayloc_key(app_t *a, int k)
     case '#': tag_filter_form(a); return true;
     case 'o': quick_add(a); return true;
     case 'O': editor_capture(a); return true;
+    case 'u': undo(a); return true;
+    case 'U': redo(a); return true;
     case 'A': open_upcoming(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
@@ -3435,14 +3520,15 @@ static bool search_key(app_t *a, int k)
     case KEY_HOME: case 'g':  a->trow = 0; return true;
     case KEY_END:  case 'G':  a->trow = n ? n - 1 : 0; return true;
     case '/': start_search(a); return true;
-    case KEY_ENTER: case 'e':
+    case KEY_ENTER: case 'e': case 'E':
         if (n == 0) return true;
         if (hits[a->trow].kind == 0) {
             int si = hits[a->trow].ref;
             if (hits[a->trow].day >= 0) a->cur = hits[a->trow].day;
             a->table = TBL_NONE;
             select_store_index(a, si);
-            if (a->sel >= 0) { a->itemmode = true; if (k == 'e') { edit_selected(a); a->itemmode = false; a->sel = -1; } }
+            if (a->sel >= 0) { a->itemmode = true; if (k == 'e' || k == 'E') { if (k == 'e') edit_selected(a); else edit_raw(a); a->itemmode = false; a->sel = -1; } }
+            else if (k == 'E') edit_raw(a);
             else edit_selected(a);
         } else {
             a->table = TBL_CONTACTS;
@@ -3466,6 +3552,8 @@ static bool search_key(app_t *a, int k)
     case '#': tag_filter_form(a); return true;
     case 'o': quick_add(a); return true;
     case 'O': editor_capture(a); return true;
+    case 'u': undo(a); return true;
+    case 'U': redo(a); return true;
     case 'A': open_upcoming(a); return true;
     case 'q': case 'Q': case '?': case 'M': case 's': case 'w': return false;
     default: return true;
@@ -3506,6 +3594,8 @@ static bool table_key(app_t *a, int k)
     case '#': tag_filter_form(a); return true;
     case 'o': quick_add(a); return true;
     case 'O': editor_capture(a); return true;
+    case 'u': undo(a); return true;
+    case 'U': redo(a); return true;
     case 'A': open_upcoming(a); return true;
     case '/': start_search(a); return true;
     case KEY_ESC: case '-': case KEY_BACKSPACE: a->table = TBL_NONE; return true;
@@ -3634,6 +3724,9 @@ static void handle_key(app_t *a, int k)
     case 'O': editor_capture(a); return;
     case 'x': toggle_done(a); return;
     case 'e': edit_selected(a); return;
+    case 'E': edit_raw(a); return;
+    case 'u': undo(a); return;
+    case 'U': redo(a); return;
     case 'm': move_selected(a); return;
     case 'd': case KEY_DEL: delete_selected(a); return;
     case 'L': set_location(a, false); return;
@@ -3679,6 +3772,7 @@ int app_run(const app_config_t *cfg, daynum_t start_day)
     a.st = cfg->st;
     a.cs = cfg->cs;
     a.cfg = *cfg;
+    a.last = store_serialize(a.st);      /* undo baseline: the store as opened */
     a.slot = cfg->slot > 0 ? cfg->slot : 15;
     a.sheet_slot = cfg->conf ? cfg->conf->sheet_slot : 30;
     a.first_wd = cfg->conf ? cfg->conf->first_weekday : 0;
@@ -3716,5 +3810,8 @@ int app_run(const app_config_t *cfg, daynum_t start_day)
     term_close();
     grid_free(&a.g);
     free(a.out.s);
+    while (a.nhist) free(a.hist[--a.nhist]);
+    while (a.nredo) free(a.redo[--a.nredo]);
+    free(a.last);
     return 0;
 }
