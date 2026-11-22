@@ -1,4 +1,5 @@
-# soon CI: build the program and run the unit tests on Linux and macOS.
+# soon CI: build the program and run the unit tests on Linux and macOS,
+# plus the UI checks on Linux.
 name: ci
 on:
   push:
@@ -14,6 +15,8 @@ jobs:
         run: make -j4
       - name: unit tests
         run: make test
+      - name: UI checks (sanitizer build)
+        run: sudo apt-get update && sudo apt-get install -y python3-pyte && make check-ui
 
   macos:
     runs-on: macos-latest

@@ -4,7 +4,7 @@
 """UI regression checks: drive the binary through tools/drive.py with the fixtures in
 test/ui/, then look for expected text on the screens and for sanitizer complaints.
 Run it on the sanitizer build:  make check-ui   (needs: pip install pyte)"""
-import os, shutil, subprocess, sys, tempfile
+import datetime, os, shutil, subprocess, sys, tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FIX = os.path.join(ROOT, "test", "ui")
@@ -20,6 +20,9 @@ CTRL_S = "\x13"
 CTRL_ENTER = "\x1b[13;5u"
 CTRL_U = "\x15"
 FORBID = ["AddressSanitizer", "runtime error", "Segmentation", "LeakSanitizer"]
+# The fixture's one event has to be upcoming on whatever day the checks run, so each
+# case gets a copy of the fixture with that event moved to ten days from today.
+EVENT_DATE = "2026-11-12"
 
 # name, editor script (or None), keys, expected substrings, forbidden substrings
 CASES = [
@@ -60,7 +63,11 @@ def run(case):
     name, editor, keys, expect, forbid = case
     tmp = tempfile.mkdtemp(prefix="soon-ui-")
     agenda = os.path.join(tmp, "agenda.soon")
-    shutil.copy(os.path.join(FIX, "agenda.soon"), agenda)
+    with open(os.path.join(FIX, "agenda.soon")) as f:
+        fixture = f.read()
+    assert EVENT_DATE in fixture, "the fixture no longer has an event on %s" % EVENT_DATE
+    with open(agenda, "w") as f:
+        f.write(fixture.replace(EVENT_DATE, (datetime.date.today() + datetime.timedelta(days=10)).isoformat()))
     env = dict(os.environ)
     env["VISUAL"] = os.path.join(FIX, editor) if editor else "/bin/false"
     env["EDITOR"] = env["VISUAL"]
