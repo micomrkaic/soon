@@ -1,5 +1,7 @@
 # soon — keyboard-driven agenda and todo TUI
 
+[![ci](https://github.com/micomrkaic/soon/actions/workflows/ci.yml/badge.svg)](https://github.com/micomrkaic/soon/actions/workflows/ci.yml)
+
 Everything in here will be done soon.
 
 C17, no dependencies beyond libc and libm.

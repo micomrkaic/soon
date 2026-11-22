@@ -1,0 +1,25 @@
+# soon CI: build the program and run the unit tests on Linux and macOS.
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: make -j4
+      - name: unit tests
+        run: make test
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: make -j4
+      - name: unit tests
+        run: make test
